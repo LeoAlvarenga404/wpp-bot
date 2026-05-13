@@ -1,0 +1,32 @@
+[Unit]
+Description=wpp-bot — Mercado Livre deals to WhatsApp
+Documentation=https://github.com/YOUR_ORG/wpp-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wppbot
+Group=wppbot
+WorkingDirectory=/opt/wpp-bot
+EnvironmentFile=/etc/wpp-bot/env
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=5
+# Allow the bot up to 30s to gracefully drain on stop / reload.
+TimeoutStopSec=30
+
+# Log to a dedicated file (rotated by /etc/logrotate.d/wpp-bot).
+StandardOutput=append:/var/log/wpp-bot/app.log
+StandardError=append:/var/log/wpp-bot/app.log
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+# Allow writing to data dirs the app owns.
+ReadWritePaths=/opt/wpp-bot/auth_info /opt/wpp-bot/data /var/log/wpp-bot
+
+[Install]
+WantedBy=multi-user.target

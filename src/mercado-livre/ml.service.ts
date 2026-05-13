@@ -2,6 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
+import { withRetry } from '../shared/retry';
 import { MercadoLivreAuthService } from './ml-auth.service';
 import {
   DealItem,
@@ -122,7 +123,9 @@ export class MercadoLivreService {
     return this.get<MLProduct>(`/products/${catalogId}`);
   }
 
-  private async fetchProductItems(catalogId: string): Promise<MLProductItemsResponse> {
+  private async fetchProductItems(
+    catalogId: string,
+  ): Promise<MLProductItemsResponse> {
     return this.get<MLProductItemsResponse>(
       `/products/${catalogId}/items?limit=10`,
     );
@@ -131,16 +134,32 @@ export class MercadoLivreService {
   private async get<T>(pathAndQuery: string): Promise<T> {
     const token = await this.auth.getAccessToken();
     const url = `${BASE_URL}${pathAndQuery}`;
-    const { data } = await firstValueFrom(
-      this.http.get<T>(url, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-          'User-Agent': 'wpp-bot/0.1 (+local-dev)',
+    try {
+      return await withRetry<T>(
+        async () => {
+          const { data } = await firstValueFrom(
+            this.http.get<T>(url, {
+              headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${token}`,
+                'User-Agent': 'wpp-bot/0.1 (+local-dev)',
+              },
+              timeout: 15000,
+            }),
+          );
+          return data;
         },
-        timeout: 15000,
-      }),
-    );
-    return data;
+        { maxAttempts: 5, baseMs: 1000, maxMs: 60_000, jitterPct: 0.25 },
+      );
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const body = err?.response?.data;
+      this.logger.error(
+        `ML GET ${pathAndQuery} failed after retries: status=${status} body=${
+          body ? JSON.stringify(body).slice(0, 500) : err?.message
+        }`,
+      );
+      throw err;
+    }
   }
 }

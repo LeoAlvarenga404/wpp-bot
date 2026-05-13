@@ -24,6 +24,11 @@ export class OAuthController {
     return { url, statusCode: 302 };
   }
 
+  @Get('status')
+  status() {
+    return this.auth.getStatus();
+  }
+
   @Get('callback')
   async callback(
     @Query('code') code: string,
@@ -53,7 +58,9 @@ export class OAuthController {
       this.logger.error('exchangeCode failed', err?.response?.data ?? err);
       return res
         .status(500)
-        .send(`<h1>Exchange failed</h1><pre>${JSON.stringify(err?.response?.data ?? err.message, null, 2)}</pre>`);
+        .send(
+          `<h1>Exchange failed</h1><pre>${JSON.stringify(err?.response?.data ?? err.message, null, 2)}</pre>`,
+        );
     }
   }
 }

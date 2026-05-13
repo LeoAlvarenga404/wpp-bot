@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Boom } from '@hapi/boom';
 import makeWASocket, {
@@ -7,8 +12,11 @@ import makeWASocket, {
   useMultiFileAuthState,
   WASocket,
 } from '@whiskeysockets/baileys';
+import * as Sentry from '@sentry/node';
 import pino from 'pino';
 import * as qrcode from 'qrcode-terminal';
+import { CommandHandler } from './command.handler';
+import { RateLimiterService } from './rate-limiter.service';
 
 @Injectable()
 export class WhatsappService implements OnModuleInit, OnModuleDestroy {
@@ -18,7 +26,17 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
   private authDir!: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  // P0-6 health tracking
+  private reconnectAttempts = 0;
+  private lastSeen: Date | null = null;
+  private lastDisconnectReason: string | null = null;
+  private reconnectExhausted = false;
+
+  constructor(
+    private readonly config: ConfigService,
+    private readonly rateLimiter: RateLimiterService,
+    private readonly commandHandler: CommandHandler,
+  ) {}
 
   async onModuleInit() {
     this.authDir = this.config.get<string>('WA_AUTH_DIR', './auth_info');
@@ -38,7 +56,7 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
     this.sock = makeWASocket({
       version,
       auth: state,
-      logger: pino({ level: 'warn' }) as any,
+      logger: pino({ level: 'warn' }),
       printQRInTerminal: false,
       browser: ['wpp-bot', 'Chrome', '1.0'],
     });
@@ -55,6 +73,10 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
 
       if (connection === 'open') {
         this.ready = true;
+        this.reconnectAttempts = 0;
+        this.reconnectExhausted = false;
+        this.lastSeen = new Date();
+        this.lastDisconnectReason = null;
         this.logger.log('WhatsApp connected.');
         void this.listGroups();
       }
@@ -62,13 +84,79 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
       if (connection === 'close') {
         this.ready = false;
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        const shouldReconnect = code !== DisconnectReason.loggedOut;
-        this.logger.warn(
-          `WA disconnected (code=${code}). Reconnect=${shouldReconnect}`,
-        );
-        if (shouldReconnect) {
-          this.reconnectTimer = setTimeout(() => void this.connect(), 3000);
+        this.lastDisconnectReason = String(code ?? 'unknown');
+
+        if (code === DisconnectReason.loggedOut) {
+          this.logger.warn(
+            'WA loggedOut — need to scan QR again. Will NOT auto-reconnect.',
+          );
+          return;
         }
+
+        this.reconnectAttempts += 1;
+        const max = Number(this.config.get<string>('WA_MAX_RECONNECTS', '10'));
+
+        if (this.reconnectAttempts >= max) {
+          this.reconnectExhausted = true;
+          this.logger.error(
+            `WA reconnect exhausted after ${this.reconnectAttempts} attempts (code=${code}). Stopping.`,
+          );
+          try {
+            Sentry.captureMessage('WA reconnect exhausted', 'error');
+          } catch {
+            // Sentry may not be initialised in dev — swallow.
+          }
+          return;
+        }
+
+        const delay = Math.min(
+          60_000,
+          1000 * Math.pow(2, this.reconnectAttempts - 1),
+        );
+        this.logger.warn(
+          `WA disconnected (code=${code}). Reconnect attempt ${this.reconnectAttempts}/${max} in ${delay}ms`,
+        );
+        this.reconnectTimer = setTimeout(() => void this.connect(), delay);
+      }
+    });
+
+    // P0-6: update lastSeen on every incoming message.
+    // P2-26: dispatch group commands prefixed with '/'.
+    this.sock.ev.on('messages.upsert', async (evt) => {
+      this.lastSeen = new Date();
+      try {
+        const messages = evt.messages ?? [];
+        for (const m of messages) {
+          if (!m || !m.message) continue;
+          if (m.key?.fromMe) continue;
+          const chatJid = m.key?.remoteJid ?? '';
+          if (!chatJid) continue;
+          const isGroup = chatJid.endsWith('@g.us');
+          if (!isGroup) continue; // commands only in groups per spec
+
+          const text =
+            m.message.conversation ??
+            m.message.extendedTextMessage?.text ??
+            m.message.imageMessage?.caption ??
+            '';
+          if (!text || !this.commandHandler.isCommand(text)) continue;
+
+          const senderJid = m.key?.participant ?? chatJid;
+          const result = await this.commandHandler.handle({
+            chatJid,
+            senderJid,
+            text,
+          });
+          if (result.reply && this.sock && this.ready) {
+            try {
+              await this.sock.sendMessage(chatJid, { text: result.reply });
+            } catch (err) {
+              this.logger.error('Failed to reply to command', err as Error);
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.error('messages.upsert handler failed', err as Error);
       }
     });
   }
@@ -92,16 +180,57 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
     return this.ready;
   }
 
-  async sendText(jid: string, text: string): Promise<void> {
-    if (!this.sock || !this.ready) throw new Error('WhatsApp not ready');
-    await this.sock.sendMessage(jid, { text });
+  /** P0-6 public health view. */
+  getHealth(): {
+    connected: boolean;
+    lastSeen: string | null;
+    reconnectAttempts: number;
+    lastDisconnectReason: string | null;
+    reconnectExhausted: boolean;
+  } {
+    return {
+      connected: this.ready,
+      lastSeen: this.lastSeen ? this.lastSeen.toISOString() : null,
+      reconnectAttempts: this.reconnectAttempts,
+      lastDisconnectReason: this.lastDisconnectReason,
+      reconnectExhausted: this.reconnectExhausted,
+    };
   }
 
-  async sendImage(jid: string, imageUrl: string, caption?: string): Promise<void> {
+  /** P1-13 pre-check helper for callers that want to avoid the throw path. */
+  canSend(): boolean {
+    return this.rateLimiter.canSend().allowed;
+  }
+
+  /** P1-13 rate limiter status passthrough. */
+  getRateLimiterStatus() {
+    return this.rateLimiter.getStatus();
+  }
+
+  async sendText(jid: string, text: string): Promise<void> {
     if (!this.sock || !this.ready) throw new Error('WhatsApp not ready');
+    const check = this.rateLimiter.canSend();
+    if (!check.allowed) {
+      throw new Error(`throttled:${check.reason ?? 'warmup_cap'}`);
+    }
+    await this.sock.sendMessage(jid, { text });
+    await this.rateLimiter.recordSend();
+  }
+
+  async sendImage(
+    jid: string,
+    imageUrl: string,
+    caption?: string,
+  ): Promise<void> {
+    if (!this.sock || !this.ready) throw new Error('WhatsApp not ready');
+    const check = this.rateLimiter.canSend();
+    if (!check.allowed) {
+      throw new Error(`throttled:${check.reason ?? 'warmup_cap'}`);
+    }
     await this.sock.sendMessage(jid, {
       image: { url: imageUrl },
       caption,
     });
+    await this.rateLimiter.recordSend();
   }
 }

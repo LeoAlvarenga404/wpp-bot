@@ -1,12 +1,14 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/node';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { firstValueFrom } from 'rxjs';
 
 const TOKEN_URL = 'https://api.mercadolibre.com/oauth/token';
 const RENEW_SAFETY_MS = 5 * 60 * 1000;
+const PROACTIVE_SKEW_MS = 30 * 60 * 1000;
 
 interface TokenResponse {
   access_token: string;
@@ -33,6 +35,8 @@ export class MercadoLivreAuthService implements OnModuleInit {
   private inflight: Promise<string> | null = null;
   private tokenFile!: string;
   private readonly pendingStates = new Map<string, number>();
+  private consecutiveRefreshFailures = 0;
+  private lastRefreshAt: number | null = null;
 
   constructor(
     private readonly http: HttpService,
@@ -94,7 +98,9 @@ export class MercadoLivreAuthService implements OnModuleInit {
     const stored = this.toStored(data);
     await this.saveToFile(stored);
     this.token = stored;
-    this.logger.log(`Token stored. user_id=${stored.user_id} expires_in=${data.expires_in}s`);
+    this.logger.log(
+      `Token stored. user_id=${stored.user_id} expires_in=${data.expires_in}s`,
+    );
     return stored;
   }
 
@@ -116,35 +122,97 @@ export class MercadoLivreAuthService implements OnModuleInit {
   }
 
   private async refresh(): Promise<string> {
-    if (!this.token?.refresh_token) {
-      throw new Error('No refresh_token available. Re-authorize via /oauth/authorize.');
+    try {
+      if (!this.token?.refresh_token) {
+        throw new Error(
+          'No refresh_token available. Re-authorize via /oauth/authorize.',
+        );
+      }
+      const clientId = this.requireEnv('ML_CLIENT_ID');
+      const clientSecret = this.requireEnv('ML_CLIENT_SECRET');
+
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: this.token.refresh_token,
+      });
+
+      this.logger.log('Refreshing ML access token...');
+      const { data } = await firstValueFrom(
+        this.http.post<TokenResponse>(TOKEN_URL, body.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+          },
+          timeout: 15000,
+        }),
+      );
+
+      const stored = this.toStored(data);
+      await this.saveToFile(stored);
+      this.token = stored;
+      this.consecutiveRefreshFailures = 0;
+      this.lastRefreshAt = Date.now();
+      this.logger.log('Token refreshed.');
+      return stored.access_token;
+    } catch (err: any) {
+      this.consecutiveRefreshFailures += 1;
+      this.logger.warn(
+        `ML token refresh failed (consecutive=${this.consecutiveRefreshFailures}): ${
+          err?.response?.status ?? err?.message
+        }`,
+      );
+      if (this.consecutiveRefreshFailures >= 3) {
+        this.logger.error('ML reauth required — visit /oauth/authorize');
+        try {
+          Sentry.captureMessage('ML reauth required', 'error');
+        } catch {
+          // Sentry not initialized → no-op
+        }
+      }
+      throw err;
     }
-    const clientId = this.requireEnv('ML_CLIENT_ID');
-    const clientSecret = this.requireEnv('ML_CLIENT_SECRET');
+  }
 
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: this.token.refresh_token,
+  /**
+   * P0-8: Public entry point for the scheduled token-refresher job.
+   * Triggers a refresh when the access token is within 30 minutes of expiry.
+   * Safe to call concurrently — coalesces via the same `inflight` promise as
+   * `getAccessToken`.
+   */
+  async proactiveRefresh(): Promise<string | null> {
+    if (!this.token) return null;
+    if (Date.now() < this.token.expires_at - PROACTIVE_SKEW_MS) {
+      return this.token.access_token;
+    }
+    if (this.inflight) return this.inflight;
+    this.inflight = this.refresh().finally(() => {
+      this.inflight = null;
     });
+    return this.inflight;
+  }
 
-    this.logger.log('Refreshing ML access token...');
-    const { data } = await firstValueFrom(
-      this.http.post<TokenResponse>(TOKEN_URL, body.toString(), {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json',
-        },
-        timeout: 15000,
-      }),
-    );
+  getStatus(): {
+    hasToken: boolean;
+    expiresAt: string | null;
+    lastRefresh: string | null;
+    consecutiveFailures: number;
+  } {
+    return {
+      hasToken: !!this.token,
+      expiresAt: this.token
+        ? new Date(this.token.expires_at).toISOString()
+        : null,
+      lastRefresh: this.lastRefreshAt
+        ? new Date(this.lastRefreshAt).toISOString()
+        : null,
+      consecutiveFailures: this.consecutiveRefreshFailures,
+    };
+  }
 
-    const stored = this.toStored(data);
-    await this.saveToFile(stored);
-    this.token = stored;
-    this.logger.log('Token refreshed.');
-    return stored.access_token;
+  getExpiresAt(): number | null {
+    return this.token?.expires_at ?? null;
   }
 
   private toStored(data: TokenResponse): StoredToken {

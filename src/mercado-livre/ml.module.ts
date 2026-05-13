@@ -8,6 +8,6 @@ import { OAuthController } from './oauth.controller';
   imports: [HttpModule],
   controllers: [OAuthController],
   providers: [MercadoLivreAuthService, MercadoLivreService],
-  exports: [MercadoLivreService],
+  exports: [MercadoLivreService, MercadoLivreAuthService],
 })
 export class MercadoLivreModule {}

@@ -5,7 +5,9 @@ import * as path from 'path';
 import { AffiliateLinkPort } from './affiliate-link.port';
 
 @Injectable()
-export class JsonCacheAffiliateAdapter implements AffiliateLinkPort, OnModuleInit {
+export class JsonCacheAffiliateAdapter
+  implements AffiliateLinkPort, OnModuleInit
+{
   private readonly logger = new Logger(JsonCacheAffiliateAdapter.name);
   private cache: Record<string, string> = {};
   private filePath!: string;

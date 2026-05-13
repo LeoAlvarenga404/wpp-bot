@@ -1,0 +1,105 @@
+// Prisma schema for wpp-bot (P1-9).
+//
+// Generate client:  npm run prisma:generate
+// Create migration: npm run prisma:migrate:dev
+// Apply migrations: npm run prisma:migrate
+// Visual browser:   npm run prisma:studio
+//
+// NOTE: Postgres is not yet provisioned. This scaffold lands so future tasks
+// can refactor file-backed state (ml-auth, dedup, affiliate cache) into Prisma.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------------------------
+// Catalog state
+// ---------------------------------------------------------------------------
+
+model Product {
+  catalogId    String   @id
+  title        String
+  thumbnail    String?
+  domainId     String?
+  lastSeenAt   DateTime
+  priceHistory PriceHistory[]
+  sentMessages SentMessage[]
+}
+
+model PriceHistory {
+  id                 BigInt   @id @default(autoincrement())
+  catalogId          String
+  itemId             String
+  priceCents         Int
+  originalPriceCents Int?
+  capturedAt         DateTime @default(now())
+  product            Product  @relation(fields: [catalogId], references: [catalogId])
+
+  @@index([catalogId, capturedAt])
+}
+
+model SentMessage {
+  id        BigInt   @id @default(autoincrement())
+  catalogId String
+  targetJid String
+  caption   String
+  sentAt    DateTime @default(now())
+  product   Product  @relation(fields: [catalogId], references: [catalogId])
+
+  @@index([catalogId, sentAt])
+}
+
+model AffiliateLink {
+  catalogId   String   @id
+  shortUrl    String
+  longUrl     String?
+  generatedAt DateTime @default(now())
+}
+
+// Singleton row (id = 1) holding current ML OAuth tokens.
+model MlToken {
+  id           Int      @id @default(1)
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime
+  userId       BigInt?
+  scope        String
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Dedup, rate-limit, targeting (P0-2, P1-13, P2-25, P2-27)
+// ---------------------------------------------------------------------------
+
+model DedupEntry {
+  catalogId String   @id
+  postedAt  DateTime @default(now())
+
+  @@index([postedAt])
+}
+
+// Generic counter bucket — e.g. WA messages/hour, WA messages/day.
+// id is the unique key (e.g. "wa:hour:2026-05-13T18"), bucket is the family
+// (e.g. "wa-hour" / "wa-day") for aggregate queries.
+model WaCounter {
+  id        String   @id
+  bucket    String
+  count     Int
+  updatedAt DateTime @updatedAt
+}
+
+model WaTarget {
+  jid    String  @id
+  name   String?
+  active Boolean @default(true)
+}
+
+model WaOptout {
+  jid     String   @id
+  addedAt DateTime @default(now())
+}

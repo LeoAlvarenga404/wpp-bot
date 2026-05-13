@@ -1,0 +1,71 @@
+# docker-compose for the wpp-bot stack.
+#
+# Services:
+#   - app:      Nest app (built from local Dockerfile)
+#   - postgres: persistence for P1-9 (Prisma) — already declared so `docker compose up`
+#               brings the full intended stack up
+#   - redis:    queue backing for P2-20 (BullMQ). Declared now; the app does not yet
+#               depend on it, so it starts but is unused until BullMQ wiring lands.
+#
+# Volumes:
+#   - pgdata    Postgres datadir
+#   - redisdata Redis AOF/RDB
+#   - ./auth_info  Baileys session keys (host-mounted so QR scan survives rebuilds)
+#   - ./data       File-backed dedup log + future on-disk caches
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wpp-bot:local
+    container_name: wpp-bot-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./auth_info:/app/auth_info
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: wpp-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wppbot
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: wppbot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wppbot -d wppbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: wpp-bot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
