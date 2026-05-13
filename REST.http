@@ -1,0 +1,64 @@
+### Variables
+@host = http://localhost:3000
+
+### Health check
+GET {{host}}/
+
+### Trigger pipeline — send 1 best deal to configured group
+POST {{host}}/pipeline/trigger
+Content-Type: application/json
+
+{
+  "max": 1
+}
+
+### Trigger pipeline — custom params
+POST {{host}}/pipeline/trigger
+Content-Type: application/json
+
+{
+  "category": "MLB1648",
+  "minDiscount": 30,
+  "max": 3
+}
+
+### Trigger pipeline — celulares (MLB1051)
+POST {{host}}/pipeline/trigger
+Content-Type: application/json
+
+{
+  "category": "MLB1051",
+  "minDiscount": 25,
+  "max": 1
+}
+
+### Trigger pipeline — eletronicos (MLB1000)
+POST {{host}}/pipeline/trigger
+Content-Type: application/json
+
+{
+  "category": "MLB1000",
+  "minDiscount": 25,
+  "max": 1
+}
+
+### Reload affiliate cache (after editing affiliate-links.json)
+POST {{host}}/affiliate/reload
+
+### Preview — list URLs bot WILL send. Paste these into ML affiliate panel to generate short links.
+POST {{host}}/pipeline/preview
+Content-Type: application/json
+
+{
+  "perCategory": 5,
+  "minDiscount": 25
+}
+
+### Preview — single category only
+POST {{host}}/pipeline/preview
+Content-Type: application/json
+
+{
+  "categories": ["MLB1648"],
+  "perCategory": 10
+}

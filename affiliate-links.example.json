@@ -1,0 +1,8 @@
+{
+  "_comment_1": "Paste full permalink (https://www.mercadolivre.com.br/p/MLBxxx) OR just the catalog id (MLBxxx) as the key.",
+  "_comment_2": "Value = short link from ML affiliate panel (https://meli.la/...).",
+  "_comment_3": "Generate links at https://www.mercadolivre.com.br/afiliados/linkbuilder",
+
+  "https://www.mercadolivre.com.br/p/MLB66122676": "https://meli.la/2AUihWK",
+  "MLB51959599": "https://meli.la/REPLACE_ME"
+}
