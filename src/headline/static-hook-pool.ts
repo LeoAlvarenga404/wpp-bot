@@ -1,0 +1,17 @@
+export const STATIC_HOOKS: string[] = [
+  'PRECINHO IMPERDÍVEL! 🔥🔥',
+  'OFERTA RELÂMPAGO! ⚡⚡',
+  'ACHADO DO DIA! 💸💸',
+  'OLHA ESSE PREÇO! 😱😱',
+  'PROMOÇÃO BÁSICA! 🎯🎯',
+  'BAIXOU DEMAIS! 📉📉',
+  'CORRE QUE TÁ ACABANDO! 🏃‍♂️💨',
+  'NÃO PERDE ESSA! 👀👀',
+  'PRECINHO PARRUDO! 💪💪',
+  'OFERTA INSANA! 🤯🤯',
+  'ALERTA DE OFERTA! 🚨🚨',
+  'DESCONTÃO MONSTRO! 🦖🦖',
+  'TÁ DE GRAÇA QUASE! 🆓🆓',
+  'PROMO BOLADA! 🎁🎁',
+  'OPORTUNIDADE ÚNICA! ✨✨',
+];

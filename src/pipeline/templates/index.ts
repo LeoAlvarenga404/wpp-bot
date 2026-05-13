@@ -1,6 +1,4 @@
 import { DealItem } from '../../mercado-livre/types';
-import { dealTemplate } from './template-deal';
-import { findTemplate } from './template-find';
 import { fireTemplate } from './template-fire';
 
 export type CaptionTemplate = (
@@ -9,11 +7,7 @@ export type CaptionTemplate = (
   link: string,
   shipping: string,
   badge: string | undefined,
-  disclaimer: string,
+  hook: string,
 ) => string;
 
-export const templates: CaptionTemplate[] = [
-  fireTemplate,
-  findTemplate,
-  dealTemplate,
-];
+export const templates: CaptionTemplate[] = [fireTemplate];

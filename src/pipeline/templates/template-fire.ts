@@ -6,19 +6,25 @@ export const fireTemplate = (
   link: string,
   shipping: string,
   badge: string | undefined,
-  disclaimer: string,
+  hook: string,
 ): string => {
-  const lines = [
-    `🔥 *${d.title}*`,
-    '',
-    badge ? badge : '',
-    `💰 ${formatBRL(d.price)} (de ${formatBRL(d.originalPrice)}) — ${d.discountPercent}% OFF`,
-    shipping,
-    '',
-    `👉 ${link}`,
-    '',
-    `_${disclaimer}_`,
-  ].filter(Boolean);
+  const block: string[] = [
+    `~${formatBRL(d.originalPrice)}~`,
+    `✅ *${formatBRL(d.price)}* (-${d.discountPercent}% OFF)`,
+  ];
+  if (shipping) block.push(shipping);
+  if (badge) block.push(badge);
 
-  return lines.join('\n');
+  const out = [
+    '#MercadoLivre',
+    hook,
+    '',
+    `➡️ *${d.title}*`,
+    '',
+    ...block,
+    '',
+    `🛒 ${link}`,
+  ];
+
+  return out.join('\n');
 };

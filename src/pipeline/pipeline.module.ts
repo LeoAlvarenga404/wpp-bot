@@ -3,6 +3,7 @@ import { AffiliateModule } from '../affiliate/affiliate.module';
 import { AuthModule } from '../auth/auth.module';
 import { CurationModule } from '../curation/curation.module';
 import { DedupModule } from '../dedup/dedup.module';
+import { HeadlineModule } from '../headline/headline.module';
 import { MercadoLivreModule } from '../mercado-livre/ml.module';
 import { WhatsappModule } from '../whatsapp/wa.module';
 import { FormatterService } from './formatter.service';
@@ -16,6 +17,7 @@ import { PipelineService } from './pipeline.service';
     AffiliateModule,
     DedupModule,
     CurationModule,
+    HeadlineModule,
     AuthModule,
   ],
   controllers: [PipelineController],
