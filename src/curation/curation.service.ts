@@ -2,11 +2,10 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { analyze } from '../deal-score/price-analytics';
+import type { PriceAnalytics, PriceObservation } from '../deal-score/types';
 
-interface PriceObservation {
-  priceCents: number;
-  at: string; // ISO timestamp
-}
+export type { PriceObservation } from '../deal-score/types';
 
 type PriceHistoryStore = Record<string, PriceObservation[]>;
 
@@ -107,6 +106,24 @@ export class CurationService implements OnModuleInit {
     const med = this.median(catalogId, 30);
     if (med == null) return this.requireHistory;
     return currentPriceCents >= med * this.discountThreshold;
+  }
+
+  /**
+   * Read-only snapshot of stored observations for a catalog id.
+   */
+  getObservations(catalogId: string): PriceObservation[] {
+    const list = this.store[catalogId];
+    return list ? [...list] : [];
+  }
+
+  /**
+   * Windowed price analytics computed from stored observations.
+   *
+   * @param now Optional clock injection — used for deterministic tests and
+   *            replaying historical state. Defaults to `new Date()`.
+   */
+  getAnalytics(catalogId: string, now?: Date): PriceAnalytics {
+    return analyze({ observations: this.getObservations(catalogId), now });
   }
 
   /**
