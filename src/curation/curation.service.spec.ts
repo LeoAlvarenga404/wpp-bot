@@ -73,3 +73,37 @@ describe('CurationService', () => {
     expect(badge).toMatch(/Menor preço em 30 dias/);
   });
 });
+
+describe('CurationService boot migration', () => {
+  it('re-prefixes unprefixed keys with ml: on load', async () => {
+    await fs.writeFile(
+      TMP_FILE,
+      JSON.stringify({
+        MLB1: [{ priceCents: 10000, at: '2026-05-14T00:00:00.000Z' }],
+        'ml:MLB2': [{ priceCents: 20000, at: '2026-05-14T00:00:00.000Z' }],
+      }),
+      'utf8',
+    );
+    const svc = makeService();
+    await svc.onModuleInit();
+    expect(svc.getObservations('ml:MLB1')).toHaveLength(1);
+    expect(svc.getObservations('ml:MLB2')).toHaveLength(1);
+    expect(svc.getObservations('MLB1')).toHaveLength(0);
+  });
+
+  it('migration is idempotent on second boot', async () => {
+    await fs.writeFile(
+      TMP_FILE,
+      JSON.stringify({ MLB1: [{ priceCents: 10000, at: '2026-05-14T00:00:00.000Z' }] }),
+      'utf8',
+    );
+    const svc1 = makeService();
+    await svc1.onModuleInit();
+    await svc1.record('ml:MLB3', 15000);
+
+    const svc2 = makeService();
+    await svc2.onModuleInit();
+    expect(svc2.getObservations('ml:MLB1')).toHaveLength(1);
+    expect(svc2.getObservations('ml:MLB3')).toHaveLength(1);
+  });
+});

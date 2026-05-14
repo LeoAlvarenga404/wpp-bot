@@ -20,6 +20,7 @@ export class CurationService implements OnModuleInit {
   private store: PriceHistoryStore = {};
   private loaded = false;
   private writeLock: Promise<void> = Promise.resolve();
+  private pendingMigrationFlush = false;
 
   private readonly requireHistory: boolean;
   private readonly discountThreshold: number;
@@ -224,7 +225,30 @@ export class CurationService implements OnModuleInit {
       }
     }
 
+    let migrated = 0;
+    for (const k of Object.keys(this.store)) {
+      if (!k.includes(':')) {
+        const newKey = `ml:${k}`;
+        if (!this.store[newKey]) this.store[newKey] = this.store[k];
+        delete this.store[k];
+        migrated++;
+      }
+    }
+    if (migrated > 0) {
+      this.logger.log(`Migrated ${migrated} key(s) to ml: prefix`);
+      this.pendingMigrationFlush = true;
+    }
+
     this.pruneOlderThan(RETENTION_DAYS);
+
+    if (this.pendingMigrationFlush) {
+      try {
+        await this.persist();
+      } catch (err) {
+        this.logger.error('Failed to flush migrated store', err as Error);
+      }
+      this.pendingMigrationFlush = false;
+    }
     this.loaded = true;
   }
 
