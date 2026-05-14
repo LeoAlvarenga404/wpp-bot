@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
+import type { ScoredDeal } from '../deal-score/types';
 import { PipelineService } from '../pipeline/pipeline.service';
 import { CategoryRotatorService } from './category-rotator.service';
 import { isQuietHours } from './quiet-hours';
@@ -41,6 +42,75 @@ export class SchedulerService {
       return;
     }
 
+    const mode = (
+      this.config.get<string>('SCHEDULER_MODE') ??
+      process.env.SCHEDULER_MODE ??
+      'legacy'
+    ).toLowerCase();
+
+    if (mode === 'batch') {
+      await this.tickBatch();
+      return;
+    }
+
+    await this.tickLegacy();
+  }
+
+  private async tickBatch(): Promise<void> {
+    const categories = this.rotator.getWeighted();
+    if (categories.length === 0) {
+      this.logger.warn(
+        'Scheduler tick (batch) skipped — no categories configured',
+      );
+      return;
+    }
+    const enrichTopN = Number(
+      this.config.get<string>('DEAL_ENRICH_TOP_N', '10'),
+    );
+    const minDiscount = Number(
+      this.config.get<string>('ML_MIN_DISCOUNT', '25'),
+    );
+    const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
+
+    const startedAt = Date.now();
+    const allScored: ScoredDeal[] = [];
+    for (const { category } of categories) {
+      const t0 = Date.now();
+      try {
+        const scored = await this.pipeline.collectScored(category, {
+          minDiscount,
+          enrichTopN,
+        });
+        allScored.push(...scored);
+        this.logger.log(
+          `batch collect ${category}: ${scored.length} passing (${Date.now() - t0}ms)`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `batch collect ${category} failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    allScored.sort((a, b) => b.score - a.score);
+    try {
+      const dispatch = await this.pipeline.dispatchScored(allScored, maxDeals);
+      const ms = Date.now() - startedAt;
+      this.logger.log(
+        `Scheduler tick batch — categories=${categories.length} ` +
+          `totalScored=${allScored.length} dispatched=${dispatch.sent} ` +
+          `failed=${dispatch.failed} topScore=${dispatch.topScore ?? 'n/a'} took=${ms}ms`,
+      );
+    } catch (err) {
+      const ms = Date.now() - startedAt;
+      this.logger.error(
+        `Scheduler tick batch dispatch failed — took=${ms}ms: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
+    }
+  }
+
+  private async tickLegacy(): Promise<void> {
     const category = this.rotator.pick();
     if (!category) {
       this.logger.warn(

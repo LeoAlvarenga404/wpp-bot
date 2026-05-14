@@ -91,6 +91,10 @@ export class CategoryRotatorService implements OnModuleInit {
     return this.lastCategory;
   }
 
+  getWeighted(): { category: string; weight: number }[] {
+    return this.weights.map((w) => ({ category: w.category, weight: w.weight }));
+  }
+
   private persist(category: string): void {
     this.lastCategory = category;
     try {

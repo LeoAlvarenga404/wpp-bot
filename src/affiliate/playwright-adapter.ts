@@ -143,8 +143,17 @@ export class PlaywrightAffiliateAdapter
       throw new Error('PLAYWRIGHT_SESSION_EXPIRED');
     }
 
+    await page
+      .waitForLoadState('networkidle', { timeout: 15_000 })
+      .catch(() => undefined);
+
     const textarea = page.locator('textarea').first();
-    await textarea.waitFor({ state: 'visible', timeout: 15_000 });
+    try {
+      await textarea.waitFor({ state: 'visible', timeout: 30_000 });
+    } catch (err) {
+      await this.dumpDebug(page, 'textarea-missing').catch(() => undefined);
+      throw err;
+    }
     await textarea.fill(originalUrl);
 
     const generateButton = page
@@ -152,21 +161,54 @@ export class PlaywrightAffiliateAdapter
       .first();
     await generateButton.click();
 
-    // Either the API listener resolves first, or we scrape the rendered
-    // short URL from the DOM.
     const domShortUrl = await page
-      .locator('text=/meli\\.la\\/[A-Za-z0-9]+/')
-      .first()
-      .innerText({ timeout: 20_000 })
+      .waitForFunction(
+        () => {
+          const re = /https?:\/\/meli\.la\/[A-Za-z0-9]+/;
+          for (const el of Array.from(
+            document.querySelectorAll('input, textarea'),
+          )) {
+            const v = (el as HTMLInputElement).value || '';
+            const m = v.match(re);
+            if (m) return m[0];
+          }
+          const body = document.body.textContent || '';
+          const m = body.match(re);
+          return m ? m[0] : null;
+        },
+        null,
+        { timeout: 20_000 },
+      )
+      .then((handle) => handle.jsonValue())
       .catch(() => null);
 
     await responsePromise;
 
     const short = apiShortUrl ?? this.extractMeliLa(domShortUrl);
     if (!short) {
+      await this.dumpDebug(page, 'no-meli-la').catch(() => undefined);
+      this.logger.warn(
+        `extract debug: apiShortUrl=${apiShortUrl} domShortUrl=${JSON.stringify(domShortUrl)}`,
+      );
       throw new Error('Failed to extract meli.la short URL from linkbuilder');
     }
     return short;
+  }
+
+  private async dumpDebug(page: Page, label: string): Promise<void> {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const dir = path.resolve('./data/playwright-debug');
+    await fs.mkdir(dir, { recursive: true });
+    const shotPath = path.join(dir, `${label}-${ts}.png`);
+    const htmlPath = path.join(dir, `${label}-${ts}.html`);
+    await page
+      .screenshot({ path: shotPath, fullPage: true })
+      .catch(() => undefined);
+    const html = await page.content().catch(() => '');
+    await fs.writeFile(htmlPath, html, 'utf8').catch(() => undefined);
+    this.logger.warn(
+      `Playwright debug dump → ${shotPath} (${html.length} bytes html)`,
+    );
   }
 
   private extractMeliLa(text: string | null): string | null {
@@ -222,9 +264,27 @@ export class PlaywrightAffiliateAdapter
       await headedBrowser.close().catch(() => undefined);
     }
 
-    this.browser = await chromium.launch({ headless: true });
+    this.browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=IsolateOrigins,site-per-process',
+      ],
+    });
     this.context = await this.browser.newContext({
       storageState: this.statePath,
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo',
+      viewport: { width: 1366, height: 768 },
+      extraHTTPHeaders: {
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+      },
+    });
+    await this.context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
     this.logger.log(
       'Playwright browser ready (headless, storage state loaded)',

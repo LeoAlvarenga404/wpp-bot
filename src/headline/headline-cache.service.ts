@@ -18,8 +18,7 @@ export class HeadlineCacheService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {
     this.filePath = path.resolve(
-      this.config.get<string>('HEADLINE_CACHE_PATH') ??
-        './data/headlines.json',
+      this.config.get<string>('HEADLINE_CACHE_PATH') ?? './data/headlines.json',
     );
     const days = Number(this.config.get<string>('HEADLINE_CACHE_DAYS') ?? '30');
     this.ttlMs = Math.max(1, days) * 24 * 60 * 60 * 1000;

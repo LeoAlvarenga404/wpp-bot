@@ -2,6 +2,7 @@ import { FormatterService } from './formatter.service';
 import { AffiliateLinkPort } from '../affiliate/affiliate-link.port';
 import { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
+import type { ScoredDeal } from '../deal-score/types';
 
 function makeDeal(overrides: Partial<DealItem> = {}): DealItem {
   return {
@@ -129,5 +130,51 @@ describe('FormatterService', () => {
 
     expect(headlineGen.generate).toHaveBeenCalledWith(deal);
     expect(caption).toContain('CAVEMAN HOOK!');
+  });
+});
+
+function makeScored(level: ScoredDeal['level']): ScoredDeal {
+  return {
+    deal: {
+      catalogId: 'C', itemId: 'I', title: 'T', thumbnail: '',
+      price: 100, originalPrice: 200, sellerId: 1, freeShipping: true,
+      permalink: 'p', discountPercent: 50,
+      seller: {
+        sellerId: 1, nickname: 'X', powerSellerStatus: 'platinum',
+        reputationLevel: '5_green', isOfficialStore: true,
+        officialStoreId: 9, ratingAverage: 4.8,
+        fetchedAt: '2026-05-13T12:00:00.000Z',
+      },
+      item: {
+        itemId: 'I', soldQuantity: 100, condition: 'new',
+        hasInstallmentsNoInterest: true,
+      },
+    } as any,
+    score: 92, rawScore: 92, level,
+    reasons: [{ code: 'lowest_price_30d', weight: 15, message: 'Menor preço dos últimos 30 dias' }],
+    penalties: [],
+    factors: { lowest_price_30d: 15 },
+  };
+}
+
+describe('FormatterService.formatScored', () => {
+  it('renders the imperdível template for level=super', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('super'));
+    expect(caption).toMatch(/PROMOÇÃO IMPERDÍVEL/);
+    expect(caption).toMatch(/Menor preço dos últimos 30 dias/);
+  });
+
+  it('renders the top template for level=top', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('top'));
+    expect(caption).toMatch(/PROMOÇÃO TOP/);
+  });
+
+  it('renders the good template for level=good (no analysis bullets)', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('good'));
+    expect(caption).toMatch(/Promoção/);
+    expect(caption).not.toMatch(/Menor preço/);
   });
 });

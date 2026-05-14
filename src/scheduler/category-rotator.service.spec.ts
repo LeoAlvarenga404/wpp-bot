@@ -143,4 +143,14 @@ describe('CategoryRotatorService', () => {
     expect(() => svc.onModuleInit()).not.toThrow();
     expect(svc.getLast()).toBeNull();
   });
+
+  it('getWeighted returns the parsed entries', () => {
+    const config = { get: () => 'A:2,B:3' } as any;
+    const svc = new CategoryRotatorService(config);
+    svc.onModuleInit();
+    expect(svc.getWeighted()).toEqual([
+      { category: 'A', weight: 2 },
+      { category: 'B', weight: 3 },
+    ]);
+  });
 });
