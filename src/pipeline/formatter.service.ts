@@ -5,7 +5,7 @@ import { HEADLINE_GENERATOR } from '../headline/headline.port';
 import type { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
-import { CaptionTemplate, templates } from './templates';
+import { CaptionTemplate, templates, templatesByLevel } from './templates';
 
 @Injectable()
 export class FormatterService {
@@ -57,8 +57,21 @@ export class FormatterService {
   }
 
   async formatScored(scored: ScoredDeal): Promise<{ caption: string; imageUrl: string }> {
-    // Stub: delegates to formatItem until per-level templates land in Task E1.
-    return this.formatItem(scored.deal);
+    const [link, hook] = await Promise.all([
+      this.affiliate.resolve(scored.deal.permalink),
+      this.headline.generate(scored.deal),
+    ]);
+    const formatBRL = (n: number) => this.formatBRL(n);
+
+    const tmpl =
+      scored.level === 'super' ? templatesByLevel.super :
+      scored.level === 'top'   ? templatesByLevel.top :
+      templatesByLevel.good;
+    // 'rejected' level never reaches dispatch; fall back to good template defensively.
+
+    const caption = tmpl(scored, formatBRL, link, hook);
+    const imageUrl = this.toHiResImage(scored.deal.thumbnail || '');
+    return { caption, imageUrl };
   }
 
   private toHiResImage(original: string): string {

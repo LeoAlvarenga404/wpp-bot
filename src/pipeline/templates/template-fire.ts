@@ -1,13 +1,14 @@
 import { DealItem } from '../../mercado-livre/types';
+import { CaptionTemplate } from './template-fire-types';
 
-export const fireTemplate = (
-  d: DealItem,
-  formatBRL: (n: number) => string,
-  link: string,
-  shipping: string,
-  badge: string | undefined,
-  hook: string,
-): string => {
+export const fireTemplate: CaptionTemplate = (
+  d,
+  formatBRL,
+  link,
+  shipping,
+  badge,
+  hook,
+) => {
   const block: string[] = [
     `~${formatBRL(d.originalPrice)}~`,
     `✅ *${formatBRL(d.price)}* (-${d.discountPercent}% OFF)`,

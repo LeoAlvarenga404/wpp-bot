@@ -1,13 +1,22 @@
-import { DealItem } from '../../mercado-livre/types';
-import { fireTemplate } from './template-fire';
+import type { ScoredDeal } from '../../deal-score/types';
+import { goodTemplate } from './template-good';
+import { imperdivelTemplate } from './template-imperdivel';
+import { topTemplate } from './template-top';
 
-export type CaptionTemplate = (
-  d: DealItem,
+export type ScoredCaptionTemplate = (
+  sd: ScoredDeal,
   formatBRL: (n: number) => string,
   link: string,
-  shipping: string,
-  badge: string | undefined,
   hook: string,
 ) => string;
 
-export const templates: CaptionTemplate[] = [fireTemplate];
+export const templatesByLevel: Record<'good' | 'top' | 'super', ScoredCaptionTemplate> = {
+  good: goodTemplate,
+  top: topTemplate,
+  super: imperdivelTemplate,
+};
+
+// Legacy template kept for the existing fireTemplate consumer (formatItem)
+export { fireTemplate } from './template-fire';
+export { templates } from './legacy';
+export type { CaptionTemplate } from './template-fire-types';
