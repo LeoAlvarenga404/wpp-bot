@@ -4,6 +4,7 @@ import type { AffiliateLinkPort } from '../affiliate/affiliate-link.port';
 import { HEADLINE_GENERATOR } from '../headline/headline.port';
 import type { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
+import type { ScoredDeal } from '../deal-score/types';
 import { CaptionTemplate, templates } from './templates';
 
 @Injectable()
@@ -53,6 +54,11 @@ export class FormatterService {
     const imageUrl = this.toHiResImage(item.thumbnail || '');
 
     return { caption, imageUrl };
+  }
+
+  async formatScored(scored: ScoredDeal): Promise<{ caption: string; imageUrl: string }> {
+    // Stub: delegates to formatItem until per-level templates land in Task E1.
+    return this.formatItem(scored.deal);
   }
 
   private toHiResImage(original: string): string {
