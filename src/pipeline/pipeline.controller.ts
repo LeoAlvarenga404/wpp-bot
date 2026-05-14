@@ -20,7 +20,13 @@ export class PipelineController {
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: TriggerDto,
   ) {
-    return this.pipeline.runOnce(body);
+    // v1: only the Mercado Livre source is registered. Map legacy `category`
+    // payloads to the new `sourceId='ml'` shape; legacy `minDiscount` is now
+    // sourced from the ML source config and is no longer a per-request knob.
+    return this.pipeline.runOnce({
+      sourceId: 'ml',
+      max: body.max,
+    });
   }
 
   @Post('preview')

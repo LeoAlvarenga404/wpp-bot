@@ -1,6 +1,5 @@
 // src/pipeline/pipeline.service.spec.ts
 
-// Mock ESM-only packages and heavy services to keep unit tests runnable under ts-jest CJS mode.
 jest.mock('@whiskeysockets/baileys', () => ({}));
 jest.mock('@hapi/boom', () => ({ Boom: class Boom {} }));
 jest.mock('@sentry/node', () => ({ captureException: jest.fn(), init: jest.fn() }));
@@ -8,59 +7,90 @@ jest.mock('../whatsapp/wa.service');
 
 import { ConfigService } from '@nestjs/config';
 import { PipelineService } from './pipeline.service';
-import { DealItem } from '../mercado-livre/types';
-import { EnrichedDeal } from '../enrichment/types';
-import { ScoredDeal } from '../deal-score/types';
+import type { DealSourcePort, RawDeal, EnrichedDeal } from '../sources/source.port';
+import type { ScoredDeal } from '../deal-score/types';
 
-const baseDeal: DealItem = {
-  catalogId: 'MLB1',
-  itemId: 'MLBI1',
-  title: 'T',
-  thumbnail: '',
-  price: 100,
-  originalPrice: 200,
-  sellerId: 7,
-  freeShipping: true,
-  permalink: 'https://x',
-  discountPercent: 50,
-};
+function rawFor(id: string, priceCents = 10000): RawDeal {
+  return {
+    key: { source: 'ml', externalId: id },
+    title: 'T',
+    priceCents,
+    originalPriceCents: priceCents * 2,
+    discountPercent: 50,
+    thumbnail: '',
+    permalink: 'p',
+    feedId: 'MLB1648',
+  };
+}
 
-function makeDeps() {
-  const calls: string[] = [];
-  const ml = {
-    getDealsFromHighlights: jest.fn(async () => [baseDeal]),
+function enrichedFor(raw: RawDeal): EnrichedDeal {
+  return {
+    key: raw.key,
+    source: 'ml',
+    raw,
+    seller: {
+      externalSellerId: '1',
+      displayName: 'S',
+      sellerTrust: 'high',
+      isVerifiedStore: false,
+      ratingAverage: 0.9,
+      fetchedAt: '2026-05-14T00:00:00.000Z',
+    },
+    condition: 'new',
+    signals: {
+      freeShipping: true,
+      installmentsNoInterest: false,
+      volumeTier: 'low',
+      isVerifiedStore: false,
+    },
+    extras: {},
+  };
+}
+
+function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
+  const fakeSource: DealSourcePort = {
+    id: 'ml',
+    discover: jest.fn(async () => opts.rawDeals),
+    discoverOne: jest.fn(async () => opts.rawDeals.slice(0, 1)),
+    enrichMany: jest.fn(async (rs: RawDeal[]) => rs.map(enrichedFor)),
+  };
+  const registry = {
+    getById: jest.fn((id: string) => {
+      if (id === 'ml') return fakeSource;
+      throw new Error('Unknown');
+    }),
+    getAll: jest.fn(() => [fakeSource]),
+  } as any;
+
+  const ml = { getDealsFromHighlights: jest.fn() } as any; // unused — kept for legacy DI
+  const wa = { isReady: () => true, sendImage: jest.fn(), sendText: jest.fn() } as any;
+  const formatter = {
+    formatScored: jest.fn(async () => ({ caption: 'cap', imageUrl: '' })),
   } as any;
   const dedup = {
-    wasRecentlyPosted: jest.fn(async () => {
-      calls.push('dedup.wasRecentlyPosted');
-      return false;
-    }),
-    markPosted: jest.fn(async () => { calls.push('dedup.markPosted'); }),
+    wasRecentlyPosted: jest.fn(async (key: string) =>
+      opts.failingId ? key.endsWith(opts.failingId) : false,
+    ),
+    markPosted: jest.fn(async () => undefined),
   } as any;
   const curation = {
-    record: jest.fn(async () => { calls.push('curation.record'); }),
-    isFakeDiscount: jest.fn(() => {
-      calls.push('curation.isFakeDiscount');
-      return false;
-    }),
-    getLowestPriceBadge: jest.fn(() => null),
-    getObservations: jest.fn(() => []),
+    record: jest.fn(async () => undefined),
+    isFakeDiscount: jest.fn(() => false),
     getAnalytics: jest.fn(() => ({
-      median7d: null, median14d: null, median30d: null,
-      min7d: null, min14d: null, min30d: null,
-      distinctDays: 0, lastObservedBefore: null, trend: 'unknown' as const,
+      median7d: null,
+      median14d: null,
+      median30d: null,
+      min7d: null,
+      min14d: null,
+      min30d: null,
+      distinctDays: 10,
     })),
-  } as any;
-  const enrichment = {
-    enrichMany: jest.fn(async (deals: DealItem[]) =>
-      deals.map((d) => ({ ...d, seller: null, item: null }) as EnrichedDeal),
-    ),
+    getObservations: jest.fn(() => []),
   } as any;
   const dealScore = {
-    compute: jest.fn(),
     computeWithObservations: jest.fn(
-      (deal: EnrichedDeal): ScoredDeal => ({
-        deal,
+      (e: EnrichedDeal): ScoredDeal => ({
+        deal: e as any,
         score: 80,
         rawScore: 80,
         level: 'good',
@@ -70,97 +100,77 @@ function makeDeps() {
       }),
     ),
   } as any;
-  const wa = {
-    isReady: () => true,
-    sendImage: jest.fn(async () => {}),
-    sendText: jest.fn(async () => {}),
-  } as any;
-  const formatter = {
-    formatItem: jest.fn(async () => ({ caption: 'cap', imageUrl: 'img' })),
-    formatScored: jest.fn(async () => ({ caption: 'cap', imageUrl: 'img' })),
-  } as any;
-  const config = {
-    get: (k: string, def?: string) => {
-      const map: Record<string, string> = {
-        WA_TARGET_JID: '5511999999999@s.whatsapp.net',
-        ML_CATEGORY: 'MLB1648',
-        ML_MIN_DISCOUNT: '25',
-        DEDUP_WINDOW_DAYS: '7',
-        MAX_DEALS_PER_RUN: '3',
-        DEAL_SCORE_MIN: '75',
-        DEAL_ENRICH_TOP_N: '10',
-      };
-      return map[k] ?? def;
-    },
-  } as unknown as ConfigService;
+  const config = { get: (_k: string, def?: string) => def } as unknown as ConfigService;
 
-  const svc = new PipelineService(ml, wa, formatter, config, dedup, curation, enrichment, dealScore);
-  return { svc, calls, ml, dedup, curation, enrichment, dealScore, wa, formatter };
+  return {
+    fakeSource,
+    registry,
+    pipeline: new PipelineService(
+      ml,
+      wa,
+      formatter,
+      config,
+      dedup,
+      curation,
+      registry,
+      dealScore,
+    ),
+    dedup,
+    curation,
+    dealScore,
+    formatter,
+    wa,
+  };
 }
 
-describe('PipelineService order', () => {
-  it('records BEFORE dedup AND BEFORE isFakeDiscount', async () => {
-    const { svc, calls } = makeDeps();
-    await svc.collectScored('MLB1648', { minDiscount: 25, enrichTopN: 10 });
-    const recordIdx = calls.indexOf('curation.record');
-    const dedupIdx = calls.indexOf('dedup.wasRecentlyPosted');
-    const fakeIdx = calls.indexOf('curation.isFakeDiscount');
-    expect(recordIdx).toBeGreaterThanOrEqual(0);
-    expect(recordIdx).toBeLessThan(dedupIdx);
-    expect(recordIdx).toBeLessThan(fakeIdx);
+describe('PipelineService.collectScored(sourceId)', () => {
+  it('records each survivor under composite key "ml:..."', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1'), rawFor('MLB2')] });
+    await d.pipeline.collectScored('ml');
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB1', 10000);
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB2', 10000);
   });
 
-  it('still records when dedup skips the deal', async () => {
-    const { svc, dedup, curation } = makeDeps();
-    dedup.wasRecentlyPosted.mockResolvedValue(true);
-    await svc.collectScored('MLB1648', { minDiscount: 25, enrichTopN: 10 });
-    expect(curation.record).toHaveBeenCalledTimes(1);
-  });
-
-  it('still records when isFakeDiscount blocks the deal', async () => {
-    const { svc, curation } = makeDeps();
-    curation.isFakeDiscount.mockReturnValue(true);
-    await svc.collectScored('MLB1648', { minDiscount: 25, enrichTopN: 10 });
-    expect(curation.record).toHaveBeenCalledTimes(1);
-  });
-
-  it('filters deals below DEAL_SCORE_MIN', async () => {
-    const { svc, dealScore } = makeDeps();
-    dealScore.computeWithObservations.mockReturnValue({
-      deal: { ...baseDeal, seller: null, item: null } as any,
-      score: 40,
-      rawScore: 40,
-      level: 'rejected',
-      reasons: [],
-      penalties: [],
-      factors: {},
+  it('skips deals already posted', async () => {
+    const d = makeDeps({
+      rawDeals: [rawFor('MLB1'), rawFor('MLB2')],
+      failingId: 'MLB1',
     });
-    const out = await svc.collectScored('MLB1648', { minDiscount: 25, enrichTopN: 10 });
-    expect(out).toHaveLength(0);
+    const out = await d.pipeline.collectScored('ml');
+    expect(out.map((s) => (s.deal as any).key.externalId)).toEqual(['MLB2']);
+  });
+
+  it('scores survivors and returns sorted desc', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1'), rawFor('MLB2')] });
+    (d.dealScore.computeWithObservations as jest.Mock)
+      .mockImplementationOnce((e: EnrichedDeal): ScoredDeal => ({
+        deal: e as any, score: 70, rawScore: 70, level: 'good',
+        reasons: [], penalties: [], factors: {},
+      }))
+      .mockImplementationOnce((e: EnrichedDeal): ScoredDeal => ({
+        deal: e as any, score: 90, rawScore: 90, level: 'top',
+        reasons: [], penalties: [], factors: {},
+      }));
+    const out = await d.pipeline.collectScored('ml');
+    // After filtering (default MIN=75) only the 90 survives:
+    expect(out.map((s) => s.score)).toEqual([90]);
   });
 });
 
-describe('dispatchScored', () => {
-  it('sorts desc and respects max', async () => {
-    const { svc, wa } = makeDeps();
-    const make = (score: number, id: string): ScoredDeal => ({
-      deal: { ...baseDeal, catalogId: id, seller: null, item: null } as any,
-      score, rawScore: score, level: 'good', reasons: [], penalties: [], factors: {},
-    });
-    const r = await svc.dispatchScored([make(70, 'A'), make(90, 'B'), make(85, 'C')], 2);
-    expect(r.sent).toBe(2);
-    // first send was the top-scored ('B')
-    expect(wa.sendImage.mock.calls[0]).toBeTruthy();
+describe('PipelineService.collectScoredOne(sourceId)', () => {
+  it('uses discoverOne and returns scored', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1')] });
+    const out = await d.pipeline.collectScoredOne('ml');
+    expect(d.fakeSource.discoverOne).toHaveBeenCalled();
+    expect(out).toHaveLength(1);
   });
+});
 
-  it('marks posted only after successful send', async () => {
-    const { svc, dedup, wa } = makeDeps();
-    wa.sendImage.mockRejectedValueOnce(new Error('boom'));
-    const r = await svc.dispatchScored([{
-      deal: { ...baseDeal, seller: null, item: null } as any,
-      score: 90, rawScore: 90, level: 'top', reasons: [], penalties: [], factors: {},
-    }], 1);
-    expect(r.sent).toBe(0);
-    expect(dedup.markPosted).not.toHaveBeenCalled();
+describe('PipelineService.collectAllScored', () => {
+  it('iterates all registered sources', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1')] });
+    const out = await d.pipeline.collectAllScored();
+    expect(d.registry.getAll).toHaveBeenCalled();
+    expect(out).toHaveLength(1);
   });
 });

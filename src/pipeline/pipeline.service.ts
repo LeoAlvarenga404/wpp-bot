@@ -1,19 +1,21 @@
+// src/pipeline/pipeline.service.ts
+
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CurationService } from '../curation/curation.service';
 import { DealScoreService } from '../deal-score/deal-score.service';
 import type { ScoredDeal } from '../deal-score/types';
 import { DedupService } from '../dedup/dedup.service';
-import { EnrichmentService } from '../enrichment/enrichment.service';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
-import { DealItem } from '../mercado-livre/types';
+import {
+  EnrichedDeal,
+  keyToString,
+  RawDeal,
+  SourceId,
+} from '../sources/source.port';
+import { SourceRegistry } from '../sources/source-registry.service';
 import { WhatsappService } from '../whatsapp/wa.service';
 import { FormatterService } from './formatter.service';
-
-const DEFAULT_CATEGORIES = [
-  'MLB1648', 'MLB1000', 'MLB1051', 'MLB5726',
-  'MLB1276', 'MLB1246', 'MLB1144', 'MLB1430',
-];
 
 @Injectable()
 export class PipelineService {
@@ -26,97 +28,96 @@ export class PipelineService {
     private readonly config: ConfigService,
     private readonly dedup: DedupService,
     private readonly curation: CurationService,
-    private readonly enrichment: EnrichmentService,
+    private readonly registry: SourceRegistry,
     private readonly dealScore: DealScoreService,
   ) {}
 
-  /**
-   * Collect candidate deals for `category`, run pre-score → enrich → full score → filter.
-   * Returns ScoredDeals with score >= DEAL_SCORE_MIN, sorted desc.
-   * Does NOT dispatch.
-   */
-  async collectScored(
-    category: string,
-    opts: { minDiscount: number; enrichTopN: number },
+  async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
+    const source = this.registry.getById(sourceId);
+    const raws = await source.discover();
+    return this.scorePipeline(source, raws);
+  }
+
+  async collectScoredOne(sourceId: SourceId): Promise<ScoredDeal[]> {
+    const source = this.registry.getById(sourceId);
+    const raws = await source.discoverOne();
+    return this.scorePipeline(source, raws);
+  }
+
+  async collectAllScored(): Promise<ScoredDeal[]> {
+    const all: ScoredDeal[] = [];
+    for (const source of this.registry.getAll()) {
+      try {
+        const raws = await source.discover();
+        const scored = await this.scorePipeline(source, raws);
+        all.push(...scored);
+      } catch (err) {
+        this.logger.error(
+          `collectAllScored source=${source.id} failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    all.sort((a, b) => b.score - a.score);
+    return all;
+  }
+
+  private async scorePipeline(
+    source: { id: SourceId; enrichMany: (raws: RawDeal[]) => Promise<EnrichedDeal[]> },
+    rawDeals: RawDeal[],
   ): Promise<ScoredDeal[]> {
     const windowDays = Number(this.config.get<string>('DEDUP_WINDOW_DAYS', '7'));
     const scoreMin = Number(this.config.get<string>('DEAL_SCORE_MIN', '75'));
-    const minDiscountNoHistory = Number(
-      this.config.get<string>('DEAL_SCORE_MIN_DISCOUNT_NO_HISTORY', '40'),
-    );
+    const enrichTopN = Number(this.config.get<string>('DEAL_ENRICH_TOP_N', '10'));
 
-    const rawDeals = await this.ml.getDealsFromHighlights({
-      category,
-      minDiscount: opts.minDiscount,
-      max: opts.enrichTopN * 3,
-    });
-
-    const survivors: DealItem[] = [];
-    for (const deal of rawDeals) {
-      const priceCents = Math.round(deal.price * 100);
-      // 1. Record FIRST — always, even if we skip below
-      await this.curation.record(deal.catalogId, priceCents);
-      // 2. Dedup
-      if (await this.dedup.wasRecentlyPosted(deal.catalogId, windowDays)) continue;
-      // 3. Hard curation gate
-      if (this.curation.isFakeDiscount(deal.catalogId, priceCents)) continue;
-      survivors.push(deal);
+    const survivors: RawDeal[] = [];
+    for (const raw of rawDeals) {
+      const keyStr = keyToString(raw.key);
+      await this.curation.record(keyStr, raw.priceCents);
+      if (await this.dedup.wasRecentlyPosted(keyStr, windowDays)) continue;
+      if (this.curation.isFakeDiscount(keyStr, raw.priceCents)) continue;
+      survivors.push(raw);
     }
 
     if (survivors.length === 0) {
-      this.logger.log(
-        `collectScored ${category} — raw=${rawDeals.length} survivors=0 enriched=0 scored=0 passing=0`,
-      );
+      this.logger.log(`scorePipeline ${source.id} - raw=${rawDeals.length} survivors=0`);
       return [];
     }
 
-    // 4. Pre-score (cheap) and take top-N
     const preScored = survivors
-      .map((d) => ({ deal: d, pre: this.prescore(d) }))
+      .map((r) => ({ raw: r, pre: this.prescore(r) }))
       .sort((a, b) => b.pre - a.pre)
-      .slice(0, opts.enrichTopN);
+      .slice(0, enrichTopN)
+      .map((x) => x.raw);
 
-    // 5. Enrich
-    const enriched = await this.enrichment.enrichMany(preScored.map((x) => x.deal));
+    const enriched = await source.enrichMany(preScored);
 
-    // 6. Full score with real observations
     const scored: ScoredDeal[] = enriched.map((e) => {
-      const observations = this.curation.getObservations(e.catalogId);
-      const analytics = this.curation.getAnalytics(e.catalogId);
-      return this.dealScore.computeWithObservations(e, analytics, observations);
+      const keyStr = keyToString(e.key);
+      const analytics = this.curation.getAnalytics(keyStr);
+      const observations = this.curation.getObservations(keyStr);
+      // DealScoreService is typed against the legacy enrichment EnrichedDeal shape;
+      // we bridge the new source-port shape through `as any` until M5 unifies the types.
+      return this.dealScore.computeWithObservations(e as any, analytics, observations);
     });
 
-    // 7. Filter
-    const passing = scored.filter((s) => {
-      if (s.score < scoreMin) return false;
-      // Without history, demand higher raw discount
-      if (s.deal.seller === null && s.deal.discountPercent < minDiscountNoHistory) {
-        const analytics = this.curation.getAnalytics(s.deal.catalogId);
-        if (analytics.distinctDays === 0) return false;
-      }
-      return true;
-    });
-
+    const passing = scored.filter((s) => s.score >= scoreMin);
     passing.sort((a, b) => b.score - a.score);
 
     this.logger.log(
-      `collectScored ${category} — raw=${rawDeals.length} survivors=${survivors.length} ` +
-      `enriched=${enriched.length} scored=${scored.length} passing=${passing.length}`,
+      `scorePipeline ${source.id} - raw=${rawDeals.length} survivors=${survivors.length} ` +
+        `enriched=${enriched.length} passing=${passing.length}`,
     );
 
     return passing;
   }
 
-  /**
-   * Dispatch a sorted list of ScoredDeals via WhatsApp, capped at `max`.
-   */
   async dispatchScored(
     scored: ScoredDeal[],
     max: number,
   ): Promise<{ sent: number; failed: number; topScore: number | null }> {
     const targetJid = this.config.get<string>('WA_TARGET_JID', '');
     if (!targetJid) throw new Error('WA_TARGET_JID not set in .env');
-    if (!this.wa.isReady()) throw new Error('WhatsApp not ready — scan QR first');
+    if (!this.wa.isReady()) throw new Error('WhatsApp not ready - scan QR first');
 
     const sorted = [...scored].sort((a, b) => b.score - a.score).slice(0, max);
     let sent = 0;
@@ -125,19 +126,20 @@ export class PipelineService {
 
     for (const sd of sorted) {
       if (topScore === null) topScore = sd.score;
+      const keyStr = keyToString((sd.deal as any).key);
       try {
         const { caption, imageUrl } = await this.formatter.formatScored(sd);
         if (imageUrl) await this.wa.sendImage(targetJid, imageUrl, caption);
         else await this.wa.sendText(targetJid, caption);
-        await this.dedup.markPosted(sd.deal.catalogId);
+        await this.dedup.markPosted(keyStr);
         this.logger.log(
-          `dispatch ${sd.deal.catalogId} → WA sent ok (level=${sd.level}, score=${sd.score})`,
+          `dispatch ${keyStr} -> WA sent ok (level=${sd.level}, score=${sd.score})`,
         );
         sent++;
       } catch (err) {
         failed++;
         this.logger.error(
-          `dispatch ${sd.deal.catalogId} failed: ${(err as Error).message}`,
+          `dispatch ${keyStr} failed: ${(err as Error).message}`,
         );
       }
       await this.sleep(2000);
@@ -146,49 +148,37 @@ export class PipelineService {
     return { sent, failed, topScore };
   }
 
-  /**
-   * Cheap pre-score using only fields already on DealItem + curation analytics.
-   * Used to budget enrichment calls to top-N candidates.
-   */
-  private prescore(deal: DealItem): number {
-    const priceCents = Math.round(deal.price * 100);
-    const analytics = this.curation.getAnalytics(deal.catalogId);
+  private prescore(raw: RawDeal): number {
+    const keyStr = keyToString(raw.key);
+    const analytics = this.curation.getAnalytics(keyStr);
     let s = 0;
-    s += Math.min(20, Math.max(0, deal.discountPercent - 25));
-    if (analytics.median30d != null && priceCents < analytics.median30d) {
-      const ratio = 1 - priceCents / analytics.median30d;
+    s += Math.min(20, Math.max(0, raw.discountPercent - 25));
+    if (analytics.median30d != null && raw.priceCents < analytics.median30d) {
+      const ratio = 1 - raw.priceCents / analytics.median30d;
       s += Math.min(25, ratio * 100);
     }
-    if (analytics.min30d != null && priceCents <= analytics.min30d) s += 15;
-    else if (analytics.min14d != null && priceCents <= analytics.min14d) s += 10;
-    else if (analytics.min7d != null && priceCents <= analytics.min7d) s += 5;
-    if (deal.freeShipping) s += 5;
+    if (analytics.min30d != null && raw.priceCents <= analytics.min30d) s += 15;
+    else if (analytics.min14d != null && raw.priceCents <= analytics.min14d) s += 10;
+    else if (analytics.min7d != null && raw.priceCents <= analytics.min7d) s += 5;
     if (analytics.distinctDays < 7) s -= 25;
     return s;
   }
 
   async runOnce(opts?: {
-    category?: string;
-    minDiscount?: number;
+    sourceId?: SourceId;
     max?: number;
   }) {
-    const category =
-      opts?.category ?? this.config.get<string>('ML_CATEGORY', 'MLB1648');
-    const minDiscount =
-      opts?.minDiscount ??
-      Number(this.config.get<string>('ML_MIN_DISCOUNT', '25'));
-    const enrichTopN = Number(this.config.get<string>('DEAL_ENRICH_TOP_N', '10'));
+    const sourceId: SourceId = opts?.sourceId ?? 'ml';
     const max = opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
 
-    const scored = await this.collectScored(category, { minDiscount, enrichTopN });
+    const scored = await this.collectScored(sourceId);
     const dispatch = await this.dispatchScored(scored, max);
     return {
       sent: dispatch.sent,
       failed: dispatch.failed,
       scored: scored.length,
       topScore: dispatch.topScore,
-      category,
-      minDiscount,
+      sourceId,
     };
   }
 
@@ -197,23 +187,24 @@ export class PipelineService {
     minDiscount?: number;
     perCategory?: number;
   }) {
+    const DEFAULT_CATEGORIES = [
+      'MLB1648', 'MLB1000', 'MLB1051', 'MLB5726',
+      'MLB1276', 'MLB1246', 'MLB1144', 'MLB1430',
+    ];
     const categories = opts?.categories?.length ? opts.categories : DEFAULT_CATEGORIES;
     const minDiscount =
-      opts?.minDiscount ??
-      Number(this.config.get<string>('ML_MIN_DISCOUNT', '25'));
+      opts?.minDiscount ?? Number(this.config.get<string>('ML_MIN_DISCOUNT', '25'));
     const perCategory = opts?.perCategory ?? 5;
 
     const results: Record<string, { permalink: string; title: string; price: number; discountPercent: number }[]> = {};
     const flatUrls: string[] = [];
-
     for (const cat of categories) {
       const deals = await this.ml.getDealsFromHighlights({ category: cat, minDiscount, max: perCategory });
-      results[cat] = deals.map((d: DealItem) => ({
+      results[cat] = deals.map((d) => ({
         permalink: d.permalink, title: d.title, price: d.price, discountPercent: d.discountPercent,
       }));
       for (const d of deals) flatUrls.push(d.permalink);
     }
-
     return {
       minDiscount, perCategory, totalUrls: flatUrls.length,
       pasteIntoAffiliatePanel: flatUrls.join('\n'),

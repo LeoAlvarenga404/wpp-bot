@@ -77,10 +77,7 @@ export class SchedulerService {
     for (const { feedId } of categories) {
       const t0 = Date.now();
       try {
-        const scored = await this.pipeline.collectScored(feedId, {
-          minDiscount,
-          enrichTopN,
-        });
+        const scored = await this.pipeline.collectScored('ml');
         allScored.push(...scored);
         this.logger.log(
           `batch collect ${feedId}: ${scored.length} passing (${Date.now() - t0}ms)`,
@@ -122,7 +119,7 @@ export class SchedulerService {
     const startedAt = Date.now();
     this.logger.log(`Scheduler tick start — category=${category}`);
     try {
-      const result = await this.pipeline.runOnce({ category });
+      const result = await this.pipeline.runOnce({ sourceId: 'ml' });
       const ms = Date.now() - startedAt;
       this.logger.log(
         `Scheduler tick done — category=${category} sent=${result.sent} took=${ms}ms`,
