@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { SellerCacheService } from './seller-cache.service';
-import { SellerInfo } from './types';
+import type { SellerInfo } from './types';
 
 const TMP_FILE = path.resolve('./data/seller-cache.test.json');
 

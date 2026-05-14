@@ -4,7 +4,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { SellerInfo } from './types';
+import type { SellerInfo } from './types';
 
 type SellerStore = Record<string, SellerInfo>;
 
@@ -74,10 +74,26 @@ export class SellerCacheService implements OnModuleInit {
 
   private async persistNow(): Promise<void> {
     const dir = path.dirname(this.filePath);
-    await fs.mkdir(dir, { recursive: true });
+    try {
+      await fs.mkdir(dir, { recursive: true });
+    } catch (err) {
+      this.logger.error(`Failed to ensure dir ${dir}`, err as Error);
+      throw err;
+    }
+
     const tmp = `${this.filePath}.tmp`;
     const data = JSON.stringify(this.store, null, 2);
-    await fs.writeFile(tmp, data, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(tmp, this.filePath);
+    try {
+      await fs.writeFile(tmp, data, { encoding: 'utf8', mode: 0o600 });
+      await fs.rename(tmp, this.filePath);
+    } catch (err) {
+      this.logger.error(`Failed to write ${this.filePath}`, err as Error);
+      try {
+        await fs.unlink(tmp);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
   }
 }
