@@ -9,6 +9,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { SharedLoggerModule } from './shared/logger.module';
+import { SourcesModule } from './sources/sources.module';
 import { WhatsappModule } from './whatsapp/wa.module';
 
 // DbModule (Prisma) intentionally NOT registered here. Enable it manually
@@ -19,6 +20,7 @@ import { WhatsappModule } from './whatsapp/wa.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     SharedLoggerModule,
+    SourcesModule,
     MercadoLivreModule,
     WhatsappModule,
     AffiliateModule,
