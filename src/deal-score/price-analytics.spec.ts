@@ -113,3 +113,82 @@ describe('analyze()', () => {
     expect(r.lastObservedBefore!.priceCents).toBe(12000);
   });
 });
+
+describe('detectPriceRaiseBeforeDiscount()', () => {
+  const now = new Date('2026-05-13T12:00:00Z');
+  const opts = {
+    peakWindowDays: 14,
+    baselineWindowDays: 30,
+    peakRatio: 1.2,
+    currentBaselineRatio: 0.95,
+  };
+
+  it('flags classic trap: 100 → 150 → 120', () => {
+    const observations = [
+      obs(10000, 25, now), // R$100 baseline 30d ago
+      obs(10000, 20, now), // baseline
+      obs(15000, 10, now), // R$150 peak inside peakWindow (last 14d)
+      obs(15000, 7, now),
+    ];
+    const r = detectPriceRaiseBeforeDiscount(
+      { observations, now },
+      12000, // current R$120
+      opts,
+    );
+    expect(r.suspicious).toBe(true);
+    expect(r.peakInWindowCents).toBe(15000);
+    expect(r.baselinePreWindowCents).toBe(10000);
+    expect(r.reason).toMatch(/peak/);
+  });
+
+  it('does NOT flag genuine drop: current well below baseline', () => {
+    const observations = [
+      obs(10000, 25, now),
+      obs(10000, 20, now),
+      obs(15000, 10, now),
+      obs(15000, 7, now),
+    ];
+    const r = detectPriceRaiseBeforeDiscount(
+      { observations, now },
+      8000, // current R$80, below baseline*0.95 = 9500
+      opts,
+    );
+    expect(r.suspicious).toBe(false);
+  });
+
+  it('does NOT flag when no peak above ratio threshold', () => {
+    const observations = [
+      obs(10000, 25, now),
+      obs(10000, 20, now),
+      obs(11000, 10, now), // only +10%, below 1.20
+      obs(11000, 7, now),
+    ];
+    const r = detectPriceRaiseBeforeDiscount(
+      { observations, now },
+      10500,
+      opts,
+    );
+    expect(r.suspicious).toBe(false);
+  });
+
+  it('returns suspicious=false with missing baseline', () => {
+    const observations = [
+      obs(15000, 10, now),
+      obs(15000, 7, now),
+    ];
+    const r = detectPriceRaiseBeforeDiscount(
+      { observations, now },
+      12000,
+      opts,
+    );
+    expect(r.suspicious).toBe(false);
+    expect(r.baselinePreWindowCents).toBeNull();
+  });
+
+  it('returns suspicious=false with no observations', () => {
+    const r = detectPriceRaiseBeforeDiscount({ observations: [], now }, 12000, opts);
+    expect(r.suspicious).toBe(false);
+    expect(r.peakInWindowCents).toBeNull();
+    expect(r.baselinePreWindowCents).toBeNull();
+  });
+});
