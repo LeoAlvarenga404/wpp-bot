@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import type { ScoredDeal } from '../deal-score/types';
 import { PipelineService } from '../pipeline/pipeline.service';
-import { CategoryRotatorService } from './category-rotator.service';
+import { FeedRotatorService } from '../sources/mercado-livre/feed-rotator.service';
 import { isQuietHours } from './quiet-hours';
 
 @Injectable()
@@ -12,7 +12,7 @@ export class SchedulerService {
 
   constructor(
     private readonly pipeline: PipelineService,
-    private readonly rotator: CategoryRotatorService,
+    private readonly rotator: FeedRotatorService,
     private readonly config: ConfigService,
   ) {}
 
@@ -74,20 +74,20 @@ export class SchedulerService {
 
     const startedAt = Date.now();
     const allScored: ScoredDeal[] = [];
-    for (const { category } of categories) {
+    for (const { feedId } of categories) {
       const t0 = Date.now();
       try {
-        const scored = await this.pipeline.collectScored(category, {
+        const scored = await this.pipeline.collectScored(feedId, {
           minDiscount,
           enrichTopN,
         });
         allScored.push(...scored);
         this.logger.log(
-          `batch collect ${category}: ${scored.length} passing (${Date.now() - t0}ms)`,
+          `batch collect ${feedId}: ${scored.length} passing (${Date.now() - t0}ms)`,
         );
       } catch (err) {
         this.logger.error(
-          `batch collect ${category} failed: ${(err as Error).message}`,
+          `batch collect ${feedId} failed: ${(err as Error).message}`,
         );
       }
     }
