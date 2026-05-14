@@ -19,7 +19,7 @@ export const enrichedDealOfficialStore: EnrichedDeal = {
     isOfficialStore: true,
     officialStoreId: 9001,
     ratingAverage: 4.8,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: '2026-05-13T12:00:00.000Z',
   },
   item: {
     itemId: 'MLBI123',
