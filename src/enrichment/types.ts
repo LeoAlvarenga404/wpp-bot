@@ -6,11 +6,11 @@ export interface SellerInfo {
   sellerId: number;
   nickname: string | null;
   powerSellerStatus: string | null; // platinum, gold, silver, etc.
-  reputationLevel: string | null;   // '5_green', '4_light_green', etc.
+  reputationLevel: string | null; // '5_green', '4_light_green', etc.
   isOfficialStore: boolean;
   officialStoreId: number | null;
   ratingAverage: number | null;
-  fetchedAt: string;                // ISO
+  fetchedAt: string; // ISO
 }
 
 export interface ItemDetails {
