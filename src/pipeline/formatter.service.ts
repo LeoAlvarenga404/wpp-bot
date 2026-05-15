@@ -7,6 +7,23 @@ import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
 
+function scoredDealToHeadlineItem(scored: ScoredDeal): DealItem {
+  const raw = scored.deal.raw;
+  const externalId = scored.deal.key.externalId;
+  return {
+    catalogId: externalId,
+    itemId: externalId,
+    title: raw.title,
+    thumbnail: raw.thumbnail,
+    price: raw.priceCents / 100,
+    originalPrice: (raw.originalPriceCents ?? raw.priceCents) / 100,
+    sellerId: 0,
+    freeShipping: scored.deal.signals.freeShipping,
+    permalink: raw.permalink,
+    discountPercent: raw.discountPercent,
+  };
+}
+
 @Injectable()
 export class FormatterService {
   private readonly templates: CaptionTemplate[];
@@ -57,9 +74,11 @@ export class FormatterService {
   }
 
   async formatScored(scored: ScoredDeal): Promise<{ caption: string; imageUrl: string }> {
+    const raw = scored.deal.raw;
+    const headlineItem = scoredDealToHeadlineItem(scored);
     const [link, hook] = await Promise.all([
-      this.affiliate.resolve(scored.deal.permalink),
-      this.headline.generate(scored.deal),
+      this.affiliate.resolve(raw.permalink),
+      this.headline.generate(headlineItem),
     ]);
     const formatBRL = (n: number) => this.formatBRL(n);
 
@@ -70,7 +89,7 @@ export class FormatterService {
     // 'rejected' level never reaches dispatch; fall back to good template defensively.
 
     const caption = tmpl(scored, formatBRL, link, hook);
-    const imageUrl = this.toHiResImage(scored.deal.thumbnail || '');
+    const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
   }
 

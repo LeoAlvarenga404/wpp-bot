@@ -134,22 +134,38 @@ describe('FormatterService', () => {
 });
 
 function makeScored(level: ScoredDeal['level']): ScoredDeal {
+  const key = { source: 'ml' as const, externalId: 'MLB1' };
   return {
     deal: {
-      catalogId: 'C', itemId: 'I', title: 'T', thumbnail: '',
-      price: 100, originalPrice: 200, sellerId: 1, freeShipping: true,
-      permalink: 'p', discountPercent: 50,
+      key,
+      source: 'ml',
+      raw: {
+        key,
+        title: 'T',
+        priceCents: 10000,
+        originalPriceCents: 20000,
+        discountPercent: 50,
+        thumbnail: '',
+        permalink: 'p',
+        feedId: 'MLB1648',
+      },
       seller: {
-        sellerId: 1, nickname: 'X', powerSellerStatus: 'platinum',
-        reputationLevel: '5_green', isOfficialStore: true,
-        officialStoreId: 9, ratingAverage: 4.8,
+        externalSellerId: '1',
+        displayName: 'X',
+        sellerTrust: 'high',
+        isVerifiedStore: true,
+        ratingAverage: 4.8,
         fetchedAt: '2026-05-13T12:00:00.000Z',
       },
-      item: {
-        itemId: 'I', soldQuantity: 100, condition: 'new',
-        hasInstallmentsNoInterest: true,
+      condition: 'new',
+      signals: {
+        freeShipping: true,
+        installmentsNoInterest: true,
+        volumeTier: 'mid',
+        isVerifiedStore: true,
       },
-    } as any,
+      extras: {},
+    },
     score: 92, rawScore: 92, level,
     reasons: [{ code: 'lowest_price_30d', weight: 15, message: 'Menor preço dos últimos 30 dias' }],
     penalties: [],

@@ -8,14 +8,15 @@ export const goodTemplate = (
   link: string,
   hook: string,
 ): string => {
-  const d = sd.deal;
+  const raw = sd.deal.raw;
+  const price = raw.priceCents / 100;
   const lines: string[] = [];
   lines.push('💸 Promoção');
   if (hook) lines.push(hook);
   lines.push('');
-  lines.push(`📦 ${d.title}`);
-  lines.push(`💰 *${formatBRL(d.price)}* (-${d.discountPercent}%)`);
-  if (d.freeShipping) lines.push('🚚 Frete grátis');
+  lines.push(`📦 ${raw.title}`);
+  lines.push(`💰 *${formatBRL(price)}* (-${raw.discountPercent}%)`);
+  if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
   lines.push('');
   lines.push(`🛒 ${link}`);
   return lines.join('\n');

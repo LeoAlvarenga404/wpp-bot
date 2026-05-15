@@ -95,9 +95,7 @@ export class PipelineService {
       const keyStr = keyToString(e.key);
       const analytics = this.curation.getAnalytics(keyStr);
       const observations = this.curation.getObservations(keyStr);
-      // DealScoreService is typed against the legacy enrichment EnrichedDeal shape;
-      // we bridge the new source-port shape through `as any` until M5 unifies the types.
-      return this.dealScore.computeWithObservations(e as any, analytics, observations);
+      return this.dealScore.computeWithObservations(e, analytics, observations);
     });
 
     const passing = scored.filter((s) => s.score >= scoreMin);
@@ -126,7 +124,7 @@ export class PipelineService {
 
     for (const sd of sorted) {
       if (topScore === null) topScore = sd.score;
-      const keyStr = keyToString((sd.deal as any).key);
+      const keyStr = keyToString(sd.deal.key);
       try {
         const { caption, imageUrl } = await this.formatter.formatScored(sd);
         if (imageUrl) await this.wa.sendImage(targetJid, imageUrl, caption);

@@ -8,16 +8,17 @@ export const topTemplate = (
   link: string,
   hook: string,
 ): string => {
-  const d = sd.deal;
+  const raw = sd.deal.raw;
+  const price = raw.priceCents / 100;
   const lines: string[] = [];
   lines.push('🔥 PROMOÇÃO TOP');
   if (hook) lines.push(hook);
   lines.push('');
-  lines.push(`📦 ${d.title}`);
-  lines.push(`💰 *${formatBRL(d.price)}* (-${d.discountPercent}%)`);
+  lines.push(`📦 ${raw.title}`);
+  lines.push(`💰 *${formatBRL(price)}* (-${raw.discountPercent}%)`);
   const extras: string[] = [];
-  if (d.item?.hasInstallmentsNoInterest) extras.push(`${pickInstallments(d.price)} sem juros`);
-  if (d.freeShipping) extras.push('🚚 frete grátis');
+  if (sd.deal.signals.installmentsNoInterest) extras.push(`${pickInstallments(price)} sem juros`);
+  if (sd.deal.signals.freeShipping) extras.push('🚚 frete grátis');
   if (extras.length) lines.push(extras.join(' · '));
   lines.push('');
   const historyLine = pickHistoryLine(sd);

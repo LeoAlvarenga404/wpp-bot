@@ -1,6 +1,6 @@
 // src/deal-score/types.ts
 
-import type { EnrichedDeal } from '../enrichment/types';
+import type { EnrichedDeal } from '../sources/source.port';
 
 export interface PriceObservation {
   priceCents: number;

@@ -1,16 +1,27 @@
-import { EnrichedDeal } from '../../enrichment/types';
+// src/deal-score/__fixtures__/enriched-deal-unknown-seller.ts
 
-export const enrichedDealUnknownSeller: EnrichedDeal = {
-  catalogId: 'MLB456',
-  itemId: 'MLBI456',
-  title: 'Another Product',
-  thumbnail: '',
-  price: 89,
-  originalPrice: 99,
-  sellerId: 99,
-  freeShipping: false,
-  permalink: 'https://y',
-  discountPercent: 10,
+import type { EnrichedDeal } from '../../sources/source.port';
+
+export const enrichedUnknownSeller: EnrichedDeal = {
+  key: { source: 'ml', externalId: 'MLB9999' },
+  source: 'ml',
+  raw: {
+    key: { source: 'ml', externalId: 'MLB9999' },
+    title: 'X',
+    priceCents: 10000,
+    originalPriceCents: 20000,
+    discountPercent: 50,
+    thumbnail: '',
+    permalink: 'p',
+    feedId: 'MLB1648',
+  },
   seller: null,
-  item: null,
+  condition: 'unknown',
+  signals: {
+    freeShipping: false,
+    installmentsNoInterest: false,
+    volumeTier: 'none',
+    isVerifiedStore: false,
+  },
+  extras: {},
 };

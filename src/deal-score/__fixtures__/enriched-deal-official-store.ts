@@ -1,30 +1,34 @@
-import { EnrichedDeal } from '../../enrichment/types';
+// src/deal-score/__fixtures__/enriched-deal-official-store.ts
 
-export const enrichedDealOfficialStore: EnrichedDeal = {
-  catalogId: 'MLB123',
-  itemId: 'MLBI123',
-  title: 'Sample Product',
-  thumbnail: '',
-  price: 749,
-  originalPrice: 999.9,
-  sellerId: 7,
-  freeShipping: true,
-  permalink: 'https://x',
-  discountPercent: 25,
+import type { EnrichedDeal } from '../../sources/source.port';
+
+export const enrichedOfficialStore: EnrichedDeal = {
+  key: { source: 'ml', externalId: 'MLB1234' },
+  source: 'ml',
+  raw: {
+    key: { source: 'ml', externalId: 'MLB1234' },
+    title: 'iPhone',
+    priceCents: 499900,
+    originalPriceCents: 999900,
+    discountPercent: 50,
+    thumbnail: '',
+    permalink: 'p',
+    feedId: 'MLB1648',
+  },
   seller: {
-    sellerId: 7,
-    nickname: 'SHOP',
-    powerSellerStatus: 'platinum',
-    reputationLevel: '5_green',
-    isOfficialStore: true,
-    officialStoreId: 9001,
-    ratingAverage: 4.8,
-    fetchedAt: '2026-05-13T12:00:00.000Z',
+    externalSellerId: '42',
+    displayName: 'TOP',
+    sellerTrust: 'high',
+    isVerifiedStore: true,
+    ratingAverage: 0.9,
+    fetchedAt: '2026-05-14T00:00:00.000Z',
   },
-  item: {
-    itemId: 'MLBI123',
-    soldQuantity: 1847,
-    condition: 'new',
-    hasInstallmentsNoInterest: true,
+  condition: 'new',
+  signals: {
+    freeShipping: true,
+    installmentsNoInterest: true,
+    volumeTier: 'high',
+    isVerifiedStore: true,
   },
+  extras: {},
 };

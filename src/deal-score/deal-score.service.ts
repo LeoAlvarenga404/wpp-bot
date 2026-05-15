@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { EnrichedDeal } from '../enrichment/types';
+import type { EnrichedDeal } from '../sources/source.port';
 import { detectPriceRaiseBeforeDiscount } from './price-analytics';
 import type {
   DealLevel,
@@ -97,7 +97,7 @@ export class DealScoreService {
     analytics: PriceAnalytics,
     opts?: { now?: Date },
   ): ScoredDeal {
-    const priceCents = Math.round(deal.price * 100);
+    const priceCents = deal.raw.priceCents;
     const factors: Record<string, number> = {};
     const reasons: ScoreReason[] = [];
     const penalties: ScoreReason[] = [];
@@ -111,7 +111,7 @@ export class DealScoreService {
 
     // 1. discount_percent
     const discountWeight = clamp(
-      ((deal.discountPercent - 25) / 25) * this.w.discountMax,
+      ((deal.raw.discountPercent - 25) / 25) * this.w.discountMax,
       0,
       this.w.discountMax,
     );
@@ -119,7 +119,7 @@ export class DealScoreService {
       add(
         'discount_percent',
         Math.round(discountWeight),
-        `Desconto de ${deal.discountPercent}% no Mercado Livre`,
+        `Desconto de ${deal.raw.discountPercent}% no Mercado Livre`,
       );
     }
 
@@ -152,46 +152,51 @@ export class DealScoreService {
     }
 
     // 4. official_store
-    if (deal.seller?.isOfficialStore) {
+    if (deal.signals.isVerifiedStore) {
       add('official_store', this.w.officialStore, 'Loja oficial');
     }
 
     // 5. seller_reputation
-    if (deal.seller?.reputationLevel) {
+    if (deal.seller) {
       const map: Record<string, number> = {
-        '5_green': this.w.sellerReputationMax,
-        '4_light_green': Math.round(this.w.sellerReputationMax * 0.7),
-        '3_yellow': Math.round(this.w.sellerReputationMax * 0.3),
-        '2_orange': -Math.round(this.w.sellerReputationMax * 0.5),
-        '1_red': -Math.round(this.w.sellerReputationMax * 1.5),
+        high: this.w.sellerReputationMax,
+        medium: Math.round(this.w.sellerReputationMax * 0.3),
+        low: -Math.round(this.w.sellerReputationMax * 1.5),
+        unknown: 0,
       };
-      const w = map[deal.seller.reputationLevel];
+      const w = map[deal.seller.sellerTrust];
       if (typeof w === 'number' && w !== 0) {
         const label = w > 0 ? `Vendedor com boa reputação` : `Vendedor com reputação baixa`;
         add('seller_reputation', w, label);
       }
-    } else if (!deal.seller) {
+    } else {
       add('unknown_seller', -this.w.unknownSeller, 'Vendedor não identificado');
     }
 
     // 6. free_shipping
-    if (deal.freeShipping) {
+    if (deal.signals.freeShipping) {
       add('free_shipping', this.w.freeShipping, 'Frete grátis');
     }
 
     // 7. installments_no_interest
-    if (deal.item?.hasInstallmentsNoInterest) {
+    if (deal.signals.installmentsNoInterest) {
       add('installments_no_interest', this.w.installmentsNoInterest, 'Parcelas sem juros');
     }
 
     // 8. high_sold_quantity
-    const sold = deal.item?.soldQuantity ?? 0;
-    let soldW = 0;
-    if (sold >= 500) soldW = this.w.highSoldQtyMax;
-    else if (sold >= 100) soldW = Math.round(this.w.highSoldQtyMax * 0.6);
-    else if (sold >= 20) soldW = Math.round(this.w.highSoldQtyMax * 0.2);
+    const tierW: Record<string, number> = {
+      high: this.w.highSoldQtyMax,
+      mid: Math.round(this.w.highSoldQtyMax * 0.6),
+      low: Math.round(this.w.highSoldQtyMax * 0.2),
+      none: 0,
+    };
+    const soldW = tierW[deal.signals.volumeTier];
     if (soldW > 0) {
-      add('high_sold_quantity', soldW, `${sold} vendidos`);
+      const label =
+        deal.signals.volumeTier === 'high' ? 'Muitas vendas' :
+        deal.signals.volumeTier === 'mid'  ? 'Boa quantidade de vendas' :
+        'Algumas vendas';
+      add('high_sold_quantity', soldW, label);
     }
 
     // 9. price_stability
@@ -205,7 +210,7 @@ export class DealScoreService {
     }
 
     // 10. used_or_refurbished
-    if (deal.item?.condition && deal.item.condition !== 'new' && deal.item.condition !== 'not_specified') {
+    if (deal.condition === 'used' || deal.condition === 'refurbished') {
       add('used_or_refurbished', -this.w.usedPenalty, 'Produto não é novo');
     }
 
@@ -263,7 +268,7 @@ export class DealScoreService {
     opts?: { now?: Date },
   ): ScoredDeal {
     const base = this.compute(deal, analytics, opts);
-    const priceCents = Math.round(deal.price * 100);
+    const priceCents = deal.raw.priceCents;
     const raise = detectPriceRaiseBeforeDiscount(
       { observations, now: opts?.now },
       priceCents,

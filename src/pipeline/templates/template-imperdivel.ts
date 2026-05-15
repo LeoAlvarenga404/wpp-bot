@@ -8,18 +8,19 @@ export const imperdivelTemplate = (
   link: string,
   hook: string,
 ): string => {
-  const d = sd.deal;
+  const raw = sd.deal.raw;
+  const price = raw.priceCents / 100;
   const lines: string[] = [];
   lines.push('🚨 PROMOÇÃO IMPERDÍVEL');
   if (hook) lines.push(hook);
   lines.push('');
-  lines.push(`📦 ${d.title}`);
+  lines.push(`📦 ${raw.title}`);
   lines.push('');
-  lines.push(`💰 *${formatBRL(d.price)}* (-${d.discountPercent}%)`);
-  if (d.item?.hasInstallmentsNoInterest) {
-    lines.push(`💳 ${pickInstallments(d.price, formatBRL)} sem juros`);
+  lines.push(`💰 *${formatBRL(price)}* (-${raw.discountPercent}%)`);
+  if (sd.deal.signals.installmentsNoInterest) {
+    lines.push(`💳 ${pickInstallments(price, formatBRL)} sem juros`);
   }
-  if (d.freeShipping) lines.push('🚚 Frete grátis');
+  if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
   lines.push('');
 
   const historyLine = pickHistoryLine(sd);
@@ -44,15 +45,10 @@ function pickSellerLine(sd: ScoredDeal): string | null {
   const seller = sd.deal.seller;
   if (!seller) return null;
   const parts: string[] = [];
-  if (seller.isOfficialStore) parts.push('Loja oficial');
-  if (seller.powerSellerStatus) parts.push(`MercadoLíder ${capitalize(seller.powerSellerStatus)}`);
+  if (sd.deal.signals.isVerifiedStore) parts.push('Loja oficial');
+  if (seller.sellerTrust === 'high') parts.push('MercadoLíder');
   if (typeof seller.ratingAverage === 'number') parts.push(`${seller.ratingAverage.toFixed(1)}★`);
   return parts.length > 0 ? `✅ ${parts.join(' · ')}` : null;
-}
-
-function capitalize(s: string): string {
-  if (!s) return s;
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function pickInstallments(price: number, formatBRL: (n: number) => string): string {
