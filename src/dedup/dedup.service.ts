@@ -70,6 +70,24 @@ export class DedupService implements OnModuleInit {
       }
     }
 
+    let migrated = 0;
+    for (const k of Object.keys(this.log)) {
+      if (!k.includes(':')) {
+        const newKey = `ml:${k}`;
+        if (!this.log[newKey]) this.log[newKey] = this.log[k];
+        delete this.log[k];
+        migrated++;
+      }
+    }
+    if (migrated > 0) {
+      this.logger.log(`Migrated ${migrated} dedup key(s) to ml: prefix`);
+      try {
+        await this.persist();
+      } catch (err) {
+        this.logger.error('Failed to persist migrated dedup log', err as Error);
+      }
+    }
+
     // GC entries older than 2 * windowDays (default 14d for default window 7d).
     const gcWindowMs = 2 * DEFAULT_GC_WINDOW_DAYS * DAY_MS;
     const now = Date.now();

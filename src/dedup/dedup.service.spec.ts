@@ -76,20 +76,21 @@ describe('DedupService', () => {
   it('GC removes entries older than 2 * windowDays (default 14d) on load', async () => {
     const twentyDaysAgo = new Date(Date.now() - 20 * DAY_MS).toISOString();
     const freshIso = new Date().toISOString();
+    // Seed with ml:-prefixed keys so the boot migration is a no-op for them.
     const { service, tmpDir, filePath } = await buildService({
-      OLD: twentyDaysAgo,
-      FRESH: freshIso,
+      'ml:OLD': twentyDaysAgo,
+      'ml:FRESH': freshIso,
     });
     created.push(tmpDir);
 
-    expect(await service.wasRecentlyPosted('OLD', 7)).toBe(false);
-    expect(await service.wasRecentlyPosted('FRESH', 7)).toBe(true);
+    expect(await service.wasRecentlyPosted('ml:OLD', 7)).toBe(false);
+    expect(await service.wasRecentlyPosted('ml:FRESH', 7)).toBe(true);
 
     // On-disk file should have been rewritten without OLD.
     const raw = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
-    expect(parsed.OLD).toBeUndefined();
-    expect(parsed.FRESH).toBeTruthy();
+    expect(parsed['ml:OLD']).toBeUndefined();
+    expect(parsed['ml:FRESH']).toBeTruthy();
   });
 
   it('handles corrupt JSON gracefully (error path)', async () => {
@@ -120,5 +121,53 @@ describe('DedupService', () => {
     } catch {
       // file may not have been created at all — that's fine.
     }
+  });
+});
+
+const TMP_FILE = path.resolve('./data/posted-log.test.json');
+
+function makeService(): DedupService {
+  const svc = new DedupService();
+  (svc as any).filePath = TMP_FILE;
+  return svc;
+}
+
+describe('DedupService boot migration', () => {
+  beforeEach(async () => {
+    try { await fs.unlink(TMP_FILE); } catch {}
+  });
+  afterAll(async () => {
+    try { await fs.unlink(TMP_FILE); } catch {}
+  });
+
+  it('prefixes unprefixed keys with ml: on load', async () => {
+    await fs.writeFile(
+      TMP_FILE,
+      JSON.stringify({
+        MLB1: new Date().toISOString(),
+        'ml:MLB2': new Date().toISOString(),
+      }),
+      'utf8',
+    );
+    const svc = makeService();
+    await svc.onModuleInit();
+    expect(await svc.wasRecentlyPosted('ml:MLB1', 7)).toBe(true);
+    expect(await svc.wasRecentlyPosted('ml:MLB2', 7)).toBe(true);
+    expect(await svc.wasRecentlyPosted('MLB1', 7)).toBe(false);
+  });
+
+  it('migration is idempotent', async () => {
+    await fs.writeFile(
+      TMP_FILE,
+      JSON.stringify({ MLB1: new Date().toISOString() }),
+      'utf8',
+    );
+    const svc1 = makeService();
+    await svc1.onModuleInit();
+    await svc1.markPosted('ml:MLB3');
+    const svc2 = makeService();
+    await svc2.onModuleInit();
+    expect(await svc2.wasRecentlyPosted('ml:MLB1', 7)).toBe(true);
+    expect(await svc2.wasRecentlyPosted('ml:MLB3', 7)).toBe(true);
   });
 });
