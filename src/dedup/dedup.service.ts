@@ -7,6 +7,7 @@ type PostedLog = Record<string, string>;
 const DEFAULT_FILE = './data/posted-log.json';
 const DEFAULT_GC_WINDOW_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const BACKUP_SUFFIX = '.pre-refactor-bak';
 
 @Injectable()
 export class DedupService implements OnModuleInit {
@@ -67,6 +68,30 @@ export class DedupService implements OnModuleInit {
       } else {
         this.logger.error(`Failed to load ${this.filePath}`, err as Error);
         this.log = {};
+      }
+    }
+
+    const backupEnabled =
+      (process.env.SOURCES_MIGRATION_BACKUP ?? 'true').toLowerCase() === 'true';
+    if (backupEnabled) {
+      try {
+        const backupPath = `${this.filePath}${BACKUP_SUFFIX}`;
+        try {
+          await fs.access(backupPath);
+        } catch {
+          const raw = await fs.readFile(this.filePath, 'utf8').catch(() => '');
+          if (raw) {
+            await fs.writeFile(backupPath, raw, {
+              encoding: 'utf8',
+              mode: 0o600,
+            });
+            this.logger.log(`Pre-refactor backup saved -> ${backupPath}`);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Backup failed (continuing): ${(err as Error).message}`,
+        );
       }
     }
 

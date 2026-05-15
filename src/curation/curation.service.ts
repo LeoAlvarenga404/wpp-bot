@@ -12,6 +12,7 @@ type PriceHistoryStore = Record<string, PriceObservation[]>;
 const DEFAULT_FILE = './data/price-history.json';
 const RETENTION_DAYS = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const BACKUP_SUFFIX = '.pre-refactor-bak';
 
 @Injectable()
 export class CurationService implements OnModuleInit {
@@ -222,6 +223,31 @@ export class CurationService implements OnModuleInit {
       } else {
         this.logger.error(`Failed to load ${this.filePath}`, err as Error);
         this.store = {};
+      }
+    }
+
+    const backupEnabled =
+      (process.env.SOURCES_MIGRATION_BACKUP ?? 'true').toLowerCase() === 'true';
+    if (backupEnabled) {
+      try {
+        const backupPath = `${this.filePath}${BACKUP_SUFFIX}`;
+        try {
+          await fs.access(backupPath);
+          // already exists - skip
+        } catch {
+          const raw = await fs.readFile(this.filePath, 'utf8').catch(() => '');
+          if (raw) {
+            await fs.writeFile(backupPath, raw, {
+              encoding: 'utf8',
+              mode: 0o600,
+            });
+            this.logger.log(`Pre-refactor backup saved -> ${backupPath}`);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Backup failed (continuing): ${(err as Error).message}`,
+        );
       }
     }
 
