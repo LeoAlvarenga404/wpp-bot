@@ -117,6 +117,7 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
 
   const targets = {
     getActiveJids: jest.fn(async () => [] as string[]),
+    getActiveTargets: jest.fn(async () => [] as unknown[]),
   } as any;
   const counters = {
     dedupSkip: { inc: jest.fn() },
@@ -217,5 +218,69 @@ describe('PipelineService.collectAllScored', () => {
     const out = await d.pipeline.collectAllScored();
     expect(d.registry.getAll).toHaveBeenCalled();
     expect(out).toHaveLength(1);
+  });
+});
+
+describe('PipelineService.enqueueScored', () => {
+  function scoredFixture(): ScoredDeal {
+    return {
+      deal: enrichedFor(rawFor('MLB1')) as any,
+      score: 90,
+      rawScore: 90,
+      level: 'top',
+      reasons: [],
+      penalties: [],
+      factors: {},
+    };
+  }
+
+  it('enqueues one job per target with the target channel', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      { jid: '-100555', name: 'tg', active: true, channel: 'telegram' },
+    ]);
+
+    const result = await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+    expect(result.enqueued).toBe(2);
+    expect(result.targets).toBe(2);
+    expect(d.sendQueue.add).toHaveBeenCalledWith(
+      'send-deal',
+      expect.objectContaining({ targetJid: '123@g.us', channel: 'wa' }),
+      { jobId: expect.stringContaining('123@g.us') },
+    );
+    expect(d.sendQueue.add).toHaveBeenCalledWith(
+      'send-deal',
+      expect.objectContaining({ targetJid: '-100555', channel: 'telegram' }),
+      { jobId: expect.stringContaining('-100555') },
+    );
+  });
+
+  it('falls back to WA_TARGET_JID as a wa-channel target', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([]);
+    (d.pipeline as any).config = {
+      get: (k: string, def?: string) =>
+        k === 'WA_TARGET_JID' ? '999@g.us' : def,
+    };
+
+    const result = await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+    expect(result.enqueued).toBe(1);
+    expect(d.sendQueue.add).toHaveBeenCalledWith(
+      'send-deal',
+      expect.objectContaining({ targetJid: '999@g.us', channel: 'wa' }),
+      expect.anything(),
+    );
+  });
+
+  it('throws when no targets and no fallback', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([]);
+
+    await expect(
+      d.pipeline.enqueueScored([scoredFixture()], 3),
+    ).rejects.toThrow(/No active targets/);
   });
 });

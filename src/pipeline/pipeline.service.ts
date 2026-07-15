@@ -152,12 +152,21 @@ export class PipelineService {
       return { enqueued: 0, targets: 0, topScore: null };
     }
 
-    let jids = await this.targets.getActiveJids();
-    if (jids.length === 0) {
+    let activeTargets = await this.targets.getActiveTargets();
+    if (activeTargets.length === 0) {
       const fallback = this.config.get<string>('WA_TARGET_JID', '');
-      if (fallback) jids = [fallback];
+      if (fallback) {
+        activeTargets = [
+          {
+            jid: fallback,
+            name: 'env:WA_TARGET_JID',
+            active: true,
+            channel: 'wa',
+          },
+        ];
+      }
     }
-    if (jids.length === 0) {
+    if (activeTargets.length === 0) {
       throw new Error(
         'No active targets and WA_TARGET_JID unset — nothing to publish',
       );
@@ -168,14 +177,19 @@ export class PipelineService {
     for (const sd of sorted) {
       if (topScore === null) topScore = sd.score;
       const catalogKey = keyToString(sd.deal.key);
-      for (const targetJid of jids) {
+      for (const target of activeTargets) {
         // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
         // coalesce while waiting in the queue.
-        const jobId = `${catalogKey}:${targetJid}`;
+        const jobId = `${catalogKey}:${target.jid}`;
         try {
           await this.sendQueue.add(
             'send-deal',
-            { targetJid, catalogKey, scored: sd },
+            {
+              targetJid: target.jid,
+              channel: target.channel,
+              catalogKey,
+              scored: sd,
+            },
             { jobId },
           );
           enqueued++;
@@ -188,9 +202,9 @@ export class PipelineService {
     }
 
     this.logger.log(
-      `enqueueScored: deals=${sorted.length} targets=${jids.length} enqueued=${enqueued}`,
+      `enqueueScored: deals=${sorted.length} targets=${activeTargets.length} enqueued=${enqueued}`,
     );
-    return { enqueued, targets: jids.length, topScore };
+    return { enqueued, targets: activeTargets.length, topScore };
   }
 
   private prescore(raw: RawDeal): number {
