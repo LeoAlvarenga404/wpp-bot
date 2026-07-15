@@ -9,7 +9,9 @@ import { JudgeVerdictCache } from './verdict-cache';
   providers: [
     NoopJudge,
     DeepSeekJudgeAdapter,
-    JudgeVerdictCache,
+    // Factory: the cache constructor takes plain-number config with defaults,
+    // which Nest would otherwise try (and fail) to inject as dependencies.
+    { provide: JudgeVerdictCache, useFactory: () => new JudgeVerdictCache() },
     {
       provide: DEAL_JUDGE,
       useFactory: (

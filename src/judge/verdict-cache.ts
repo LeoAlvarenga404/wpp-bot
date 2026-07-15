@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import type { JudgeVerdict } from './judge.port';
 
 interface Entry {
@@ -11,8 +10,10 @@ interface Entry {
  * In-memory verdict cache: a gray-zone deal recurring on every tick doesn't
  * pay one LLM call per tick. Invalidated by TTL or price drift > 2%.
  * Insertion-ordered Map => first key is the oldest (eviction).
+ *
+ * NOT @Injectable: the constructor takes plain-number config with defaults,
+ * so JudgeModule provides it via useFactory.
  */
-@Injectable()
 export class JudgeVerdictCache {
   private readonly map = new Map<string, Entry>();
 
