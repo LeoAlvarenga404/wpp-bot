@@ -16,7 +16,10 @@ import { CurationService } from './curation.service';
     PrismaCurationRepo,
     { provide: CURATION_REPO, useExisting: PrismaCurationRepo },
     PrismaCurationDecisionRepo,
-    { provide: CURATION_DECISION_REPO, useExisting: PrismaCurationDecisionRepo },
+    {
+      provide: CURATION_DECISION_REPO,
+      useExisting: PrismaCurationDecisionRepo,
+    },
     CurationService,
     CurationGateService,
   ],

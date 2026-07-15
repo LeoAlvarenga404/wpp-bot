@@ -352,8 +352,7 @@ describe('PipelineService.enqueueScored', () => {
       { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
     ]);
     (d.pipeline as any).config = {
-      get: (k: string, def?: string) =>
-        k === 'WA_DIGEST_SIZE' ? '4' : def,
+      get: (k: string, def?: string) => (k === 'WA_DIGEST_SIZE' ? '4' : def),
     };
 
     await d.pipeline.enqueueScored([scoredFixture()]);

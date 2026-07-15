@@ -157,8 +157,13 @@ export class FormatterService {
     return lines.join('\n');
   }
 
+  /**
+   * ML precisa do passo de afiliação (painel/planilha). Shopee (e futuras
+   * fontes com link já comissionado no feed) usa o permalink como está.
+   */
   private resolveLink(raw: RawDeal): Promise<string> {
-    return this.affiliate.resolve(raw.permalink);
+    if (raw.key.source === 'ml') return this.affiliate.resolve(raw.permalink);
+    return Promise.resolve(raw.permalink);
   }
 
   /**

@@ -45,7 +45,10 @@ describe('DeepSeekHeadlineAdapter', () => {
     const out = await adapter.generate(makeItem());
 
     expect(out).toBe('CORRE QUE TA BARATO 🔥🔥');
-    expect(d.cache.set).toHaveBeenCalledWith('MLB1', 'CORRE QUE TA BARATO 🔥🔥');
+    expect(d.cache.set).toHaveBeenCalledWith(
+      'MLB1',
+      'CORRE QUE TA BARATO 🔥🔥',
+    );
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
     expect(url).toBe('https://api.deepseek.com/chat/completions');
     expect(JSON.parse(init.body).model).toBe('deepseek-chat');

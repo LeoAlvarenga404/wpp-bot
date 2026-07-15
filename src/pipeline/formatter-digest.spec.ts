@@ -36,7 +36,7 @@ function makeScored(
     reasons: [],
     penalties: [],
     factors: {},
-  } as ScoredDeal;
+  };
 }
 
 function makeFormatter() {
@@ -45,7 +45,7 @@ function makeFormatter() {
   };
   const headline = { generate: jest.fn(async () => 'HOOK 🔥') };
   return {
-    formatter: new FormatterService(affiliate as any, headline as any),
+    formatter: new FormatterService(affiliate as any, headline),
     affiliate,
   };
 }
@@ -72,6 +72,23 @@ describe('FormatterService.formatDigest', () => {
     expect(caption.match(/Link de afiliado/g)).toHaveLength(1);
     // imagem = oferta top (primeira da lista, gate já ordena por score)
     expect(imageUrl).toBe('https://t/-F.jpg');
+  });
+
+  it('shopee deals use the feed permalink as-is (no affiliate resolve)', async () => {
+    const { formatter, affiliate } = makeFormatter();
+    const shopee = makeScored('77', 'good');
+    (shopee.deal as any).key = { source: 'shopee', externalId: '77' };
+    (shopee.deal.raw as any).key = { source: 'shopee', externalId: '77' };
+    (shopee.deal.raw as any).permalink = 'https://s.shopee.com.br/aff77';
+
+    const { caption } = await formatter.formatDigest([
+      { scored: shopee, variant: 'A' as const },
+      { scored: makeScored('MLB1', 'top'), variant: 'A' as const },
+    ]);
+
+    expect(caption).toContain('https://s.shopee.com.br/aff77');
+    expect(caption).toContain('aff:https://ml/MLB1');
+    expect(affiliate.resolve).toHaveBeenCalledTimes(1); // só o deal ML
   });
 
   it('variant B block uses De/Por anchor; variant A does not', async () => {
