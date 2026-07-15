@@ -18,6 +18,9 @@ function makeDeps() {
     formatScored: jest
       .fn()
       .mockResolvedValue({ caption: 'cap', imageUrl: 'https://img' }),
+    formatDigest: jest
+      .fn()
+      .mockResolvedValue({ caption: 'digest-cap', imageUrl: 'https://img' }),
   };
   const dedup = { markPosted: jest.fn().mockResolvedValue(undefined) };
   const prisma = { sentMessage: { create: jest.fn().mockResolvedValue({}) } };
@@ -57,6 +60,64 @@ function makeJob(channel?: 'wa' | 'telegram') {
     },
   } as any;
 }
+
+function makeDigestJob() {
+  return {
+    id: 'digest:123@g.us:ml:MLB1+ml:MLB2',
+    name: 'send-digest',
+    data: {
+      targetJid: '123@g.us',
+      channel: 'wa',
+      digestId: 'dg-1',
+      deals: [
+        {
+          catalogKey: 'ml:MLB1',
+          variant: 'A',
+          scored: {
+            deal: { key: { source: 'ml', externalId: 'MLB1' }, raw: {} },
+            score: 90,
+            level: 'top',
+          },
+        },
+        {
+          catalogKey: 'ml:MLB2',
+          variant: 'B',
+          scored: {
+            deal: { key: { source: 'ml', externalId: 'MLB2' }, raw: {} },
+            score: 85,
+            level: 'good',
+          },
+        },
+      ],
+    },
+  } as any;
+}
+
+describe('SendDealWorker.process (send-digest)', () => {
+  it('publishes one message and audits every deal with the digestId', async () => {
+    const d = makeDeps();
+    const worker = makeWorker(d);
+
+    await (worker as any).process(makeDigestJob());
+
+    expect(d.publisher.publish).toHaveBeenCalledTimes(1);
+    expect(d.publisher.publish).toHaveBeenCalledWith(
+      { caption: 'digest-cap', imageUrl: 'https://img' },
+      '123@g.us',
+    );
+    expect(d.dedup.markPosted).toHaveBeenCalledWith('ml:MLB1');
+    expect(d.dedup.markPosted).toHaveBeenCalledWith('ml:MLB2');
+    expect(d.prisma.sentMessage.create).toHaveBeenCalledTimes(2);
+    expect(d.prisma.sentMessage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        catalogId: 'ml:MLB1',
+        targetJid: '123@g.us',
+        variant: 'A',
+        digestId: 'dg-1',
+      }),
+    });
+  });
+});
 
 describe('SendDealWorker.process', () => {
   it('routes to publisher by job channel and records SentMessage', async () => {

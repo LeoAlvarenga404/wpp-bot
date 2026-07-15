@@ -48,11 +48,13 @@ function makeScored(overrides: Partial<ScoredDeal> = {}): ScoredDeal {
     score: 82,
     rawScore: 82,
     level: 'good',
-    reasons: [{ code: 'discount_percent', weight: 12, message: 'Desconto de 40%' }],
+    reasons: [
+      { code: 'discount_percent', weight: 12, message: 'Desconto de 40%' },
+    ],
     penalties: [],
     factors: { discount_percent: 12 },
     ...overrides,
-  } as ScoredDeal;
+  };
 }
 
 describe('buildJudgeInput', () => {

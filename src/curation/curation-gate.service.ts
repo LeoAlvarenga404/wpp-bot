@@ -35,6 +35,7 @@ export class CurationGateService implements OnModuleInit {
   private readonly minConfidence: number;
   private readonly maxJudgeCallsPerTick: number;
   private readonly copyAbEnabled: boolean;
+  private readonly shopeeDispatchEnabled: boolean;
 
   constructor(
     private readonly config: ConfigService,
@@ -53,9 +54,12 @@ export class CurationGateService implements OnModuleInit {
     this.scoreTop = num('DEAL_SCORE_TOP', 90);
     this.minHistoryDays = num('CURATION_MIN_HISTORY_DAYS', 7);
     this.minConfidence = num('JUDGE_MIN_CONFIDENCE', 0.6);
-    this.maxJudgeCallsPerTick = num('JUDGE_MAX_CALLS_PER_TICK', 10);
+    this.maxJudgeCallsPerTick = num('JUDGE_MAX_CALLS_PER_TICK', 20);
     this.copyAbEnabled =
       (this.config.get<string>('COPY_AB_ENABLED') ?? 'true') !== 'false';
+    this.shopeeDispatchEnabled =
+      (this.config.get<string>('SHOPEE_DISPATCH_ENABLED') ?? 'false') ===
+      'true';
   }
 
   async onModuleInit(): Promise<void> {
@@ -135,6 +139,19 @@ export class CurationGateService implements OnModuleInit {
       const keyStr = keyToString(sd.deal.key);
       const priceCents = sd.deal.raw.priceCents;
 
+      // Warmup por fonte: fonte nova acumula histórico/auditoria mas não
+      // publica até o operador ligar o dispatch dela.
+      if (sd.deal.key.source === 'shopee' && !this.shopeeDispatchEnabled) {
+        await this.record({
+          catalogId: keyStr,
+          stage: 'source_warmup',
+          outcome: 'rejected',
+          score: sd.score,
+          priceCents,
+        });
+        continue;
+      }
+
       if ('price_raise_before_discount' in sd.factors) {
         await this.record({
           catalogId: keyStr,
@@ -147,8 +164,7 @@ export class CurationGateService implements OnModuleInit {
         continue;
       }
 
-      const noHistory =
-        this.curation.historyDays(keyStr) < this.minHistoryDays;
+      const noHistory = this.curation.historyDays(keyStr) < this.minHistoryDays;
       const grayZone = noHistory || sd.score < this.scoreTop;
 
       if (grayZone) {

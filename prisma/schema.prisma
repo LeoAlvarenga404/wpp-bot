@@ -55,6 +55,7 @@ model SentMessage {
   targetJid String
   caption   String
   variant   String?
+  digestId  String?
   sentAt    DateTime @default(now())
 
   @@index([catalogId, sentAt])
@@ -63,7 +64,8 @@ model SentMessage {
 // Curation decision audit (Fase 2). One row per (catalogId, stage, day) —
 // repeated rejections on the */1 cron only bump `count`. stage/outcome are
 // strings, not enums, so a new stage doesn't require a migration (same
-// rationale as WaTarget.channel). No FK to Product — see PriceHistory note.
+// rationale as WaTarget.channel) — e.g. Fase 3 added 'source_warmup'.
+// No FK to Product — see PriceHistory note.
 model CurationDecision {
   id           BigInt   @id @default(autoincrement())
   catalogId    String

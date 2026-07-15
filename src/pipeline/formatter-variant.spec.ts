@@ -32,13 +32,13 @@ function makeScored(level: 'good' | 'top' | 'super' = 'good'): ScoredDeal {
     reasons: [],
     penalties: [],
     factors: {},
-  } as ScoredDeal;
+  };
 }
 
 function makeFormatter(): FormatterService {
   const affiliate = { resolve: jest.fn().mockResolvedValue('https://aff/x') };
   const headline = { generate: jest.fn().mockResolvedValue('HOOK TESTE 🔥') };
-  return new FormatterService(affiliate as any, headline as any);
+  return new FormatterService(affiliate as any, headline);
 }
 
 describe('FormatterService.formatScored variants', () => {

@@ -72,7 +72,6 @@ export class SchedulerService {
   }
 
   private async tickBatch(): Promise<void> {
-    const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
     const startedAt = Date.now();
     const dispatch = this.dispatchEnabled();
     try {
@@ -85,7 +84,7 @@ export class SchedulerService {
         );
         return;
       }
-      const result = await this.pipeline.enqueueScored(allScored, maxDeals);
+      const result = await this.pipeline.enqueueScored(allScored);
       this.logger.log(
         `Scheduler tick batch - totalScored=${allScored.length} ` +
           `enqueued=${result.enqueued} targets=${result.targets} ` +
@@ -108,7 +107,6 @@ export class SchedulerService {
       );
       return;
     }
-    const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
     const startedAt = Date.now();
     const dispatch = this.dispatchEnabled();
     try {
@@ -121,7 +119,7 @@ export class SchedulerService {
         );
         return;
       }
-      const result = await this.pipeline.enqueueScored(scored, maxDeals);
+      const result = await this.pipeline.enqueueScored(scored);
       this.logger.log(
         `Scheduler tick legacy - source=${sourceId} scored=${scored.length} ` +
           `enqueued=${result.enqueued} targets=${result.targets} took=${ms}ms`,

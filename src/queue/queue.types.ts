@@ -24,3 +24,20 @@ export interface SendDealJob {
   trustBadge?: TrustBadge;
   scored: ScoredDeal;
 }
+
+export interface DigestDealEntry {
+  catalogKey: string;
+  variant: 'A' | 'B';
+  scored: ScoredDeal;
+}
+
+/** Several deals bundled into a single WA message (job name 'send-digest'). */
+export interface SendDigestJob {
+  targetJid: string;
+  channel: 'wa';
+  /** Groups the SentMessage audit rows of one digest. */
+  digestId: string;
+  deals: DigestDealEntry[];
+}
+
+export type SendJob = SendDealJob | SendDigestJob;

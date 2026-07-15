@@ -6,7 +6,7 @@ import { HEADLINE_FRAMES, HeadlineFrame, pickFrame } from './headline-frames';
 import { HeadlineGenerator } from './headline.port';
 import { NoopHeadlineAdapter } from './noop-headline.adapter';
 
-interface GroqResponse {
+interface ChatResponse {
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
@@ -23,8 +23,8 @@ const FORBIDDEN_WORDS = [
 ];
 
 @Injectable()
-export class GroqHeadlineAdapter implements HeadlineGenerator {
-  private readonly logger = new Logger(GroqHeadlineAdapter.name);
+export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
+  private readonly logger = new Logger(DeepSeekHeadlineAdapter.name);
   private readonly apiKey: string;
   private readonly model: string;
   private readonly endpoint: string;
@@ -40,12 +40,11 @@ export class GroqHeadlineAdapter implements HeadlineGenerator {
     private readonly cache: HeadlineCacheService,
     private readonly fallback: NoopHeadlineAdapter,
   ) {
-    this.apiKey = this.config.get<string>('GROQ_API_KEY') ?? '';
-    this.model =
-      this.config.get<string>('HEADLINE_MODEL') ?? 'llama-3.1-8b-instant';
+    this.apiKey = this.config.get<string>('DEEPSEEK_API_KEY') ?? '';
+    this.model = this.config.get<string>('HEADLINE_MODEL') ?? 'deepseek-chat';
     this.endpoint =
-      this.config.get<string>('GROQ_ENDPOINT') ??
-      'https://api.groq.com/openai/v1/chat/completions';
+      this.config.get<string>('DEEPSEEK_ENDPOINT') ??
+      'https://api.deepseek.com/chat/completions';
     this.temperature = Number(
       this.config.get<string>('HEADLINE_TEMPERATURE') ?? '1.0',
     );
@@ -69,20 +68,20 @@ export class GroqHeadlineAdapter implements HeadlineGenerator {
     if (cached) return cached;
 
     if (!this.apiKey) {
-      this.logger.warn('GROQ_API_KEY missing — using static hook pool');
+      this.logger.warn('DEEPSEEK_API_KEY missing — using static hook pool');
       return this.fallback.generate(item);
     }
 
     const frame = pickFrame();
     try {
-      const headline = await this.callGroq(item, frame);
+      const headline = await this.callDeepSeek(item, frame);
       let clean = this.sanitize(headline);
       if (!clean) throw new Error('empty headline');
       if (this.hasForbiddenWord(clean)) {
         this.logger.warn(
           `headline contained forbidden word, retrying once: "${clean}"`,
         );
-        const retry = await this.callGroq(item, frame);
+        const retry = await this.callDeepSeek(item, frame);
         clean = this.sanitize(retry);
       }
       if (!clean) throw new Error('empty headline after retry');
@@ -90,12 +89,12 @@ export class GroqHeadlineAdapter implements HeadlineGenerator {
       return clean;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Groq failed (${msg}) — using static hook pool`);
+      this.logger.warn(`DeepSeek failed (${msg}) — using static hook pool`);
       return this.fallback.generate(item);
     }
   }
 
-  private async callGroq(
+  private async callDeepSeek(
     item: DealItem,
     frame: HeadlineFrame,
   ): Promise<string> {
@@ -135,7 +134,7 @@ export class GroqHeadlineAdapter implements HeadlineGenerator {
       throw new Error(`status=${res.status} body=${body.slice(0, 200)}`);
     }
 
-    const data = (await res.json()) as GroqResponse;
+    const data = (await res.json()) as ChatResponse;
     if (data.error?.message) throw new Error(data.error.message);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error('no content in response');

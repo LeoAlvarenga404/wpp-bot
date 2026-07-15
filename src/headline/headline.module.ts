@@ -3,24 +3,24 @@ import { ConfigService } from '@nestjs/config';
 import { HeadlineCacheService } from './headline-cache.service';
 import { HEADLINE_GENERATOR } from './headline.port';
 import type { HeadlineGenerator } from './headline.port';
-import { GroqHeadlineAdapter } from './groq-headline.adapter';
+import { DeepSeekHeadlineAdapter } from './deepseek-headline.adapter';
 import { NoopHeadlineAdapter } from './noop-headline.adapter';
 
 @Module({
   providers: [
     HeadlineCacheService,
     NoopHeadlineAdapter,
-    GroqHeadlineAdapter,
+    DeepSeekHeadlineAdapter,
     {
       provide: HEADLINE_GENERATOR,
-      inject: [ConfigService, NoopHeadlineAdapter, GroqHeadlineAdapter],
+      inject: [ConfigService, NoopHeadlineAdapter, DeepSeekHeadlineAdapter],
       useFactory: (
         config: ConfigService,
         noop: NoopHeadlineAdapter,
-        groq: GroqHeadlineAdapter,
+        deepseek: DeepSeekHeadlineAdapter,
       ): HeadlineGenerator => {
         const provider = (
-          config.get<string>('HEADLINE_PROVIDER', 'groq') ?? 'groq'
+          config.get<string>('HEADLINE_PROVIDER', 'deepseek') ?? 'deepseek'
         )
           .toLowerCase()
           .trim();
@@ -29,15 +29,15 @@ import { NoopHeadlineAdapter } from './noop-headline.adapter';
           logger.log('Headline provider: noop (static hook pool)');
           return noop;
         }
-        if (provider === 'groq') {
-          if (!config.get<string>('GROQ_API_KEY')) {
+        if (provider === 'deepseek') {
+          if (!config.get<string>('DEEPSEEK_API_KEY')) {
             logger.warn(
-              'HEADLINE_PROVIDER=groq but GROQ_API_KEY missing — falling back to noop',
+              'HEADLINE_PROVIDER=deepseek but DEEPSEEK_API_KEY missing — falling back to noop',
             );
             return noop;
           }
-          logger.log('Headline provider: groq');
-          return groq;
+          logger.log('Headline provider: deepseek');
+          return deepseek;
         }
         logger.warn(
           `Unknown HEADLINE_PROVIDER=${provider} — falling back to noop`,

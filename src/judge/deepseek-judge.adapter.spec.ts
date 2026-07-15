@@ -96,7 +96,11 @@ describe('DeepSeekJudgeAdapter', () => {
   it('clamps confidence into 0..1', async () => {
     mockFetchOnce({
       choices: [
-        { message: { content: '{"approve": true, "confidence": 3, "reason": "x"}' } },
+        {
+          message: {
+            content: '{"approve": true, "confidence": 3, "reason": "x"}',
+          },
+        },
       ],
     });
     const verdict = await makeAdapter().judge(input);

@@ -99,7 +99,7 @@ function makeGate(d: ReturnType<typeof makeDeps>) {
     d.config as any,
     d.curation as any,
     d.dedup as any,
-    d.judge as any,
+    d.judge,
     d.decisions as any,
     d.cache as any,
     d.counters as any,
@@ -260,7 +260,11 @@ describe('CurationGateService.selectForDispatch', () => {
 
   it('uses cached verdicts without consuming judge budget', async () => {
     const d = makeDeps();
-    d.cache.get.mockReturnValue({ approve: true, confidence: 0.9, reason: 'ok' });
+    d.cache.get.mockReturnValue({
+      approve: true,
+      confidence: 0.9,
+      reason: 'ok',
+    });
     const gate = makeGate(d);
 
     const out = await gate.selectForDispatch([makeScored('MLB1', 80)], 3);
@@ -318,5 +322,53 @@ describe('CurationGateService.recordPosted / recordScoreReject', () => {
       outcome: 'rejected',
       score: 60,
     });
+  });
+});
+
+function makeShopeeScored(id: string, score: number): ScoredDeal {
+  const sd = makeScored(id, score);
+  const key = { source: 'shopee' as const, externalId: id };
+  (sd.deal as any).key = key;
+  (sd.deal.raw as any).key = key;
+  return sd;
+}
+
+describe('CurationGateService source warmup (shopee)', () => {
+  it('rejects shopee deals with stage=source_warmup while dispatch is off (default)', async () => {
+    const d = makeDeps(); // sem SHOPEE_DISPATCH_ENABLED — default é false
+    const gate = makeGate(d);
+    // score 95 + histórico (historyDays=30 no fake) — prova que o warmup
+    // bloqueia ANTES de qualquer outra regra do gate.
+    const out = await gate.selectForDispatch([makeShopeeScored('77', 95)], 5);
+
+    expect(out).toHaveLength(0);
+    expect(d.decisions.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        catalogId: 'shopee:77',
+        stage: 'source_warmup',
+        outcome: 'rejected',
+      }),
+    );
+    expect(d.judge.judge).not.toHaveBeenCalled();
+  });
+
+  it('lets shopee deals through when SHOPEE_DISPATCH_ENABLED=true', async () => {
+    const d = makeDeps({ SHOPEE_DISPATCH_ENABLED: 'true' });
+    const gate = makeGate(d);
+
+    const out = await gate.selectForDispatch([makeShopeeScored('77', 95)], 5);
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('never touches ml deals', async () => {
+    const d = makeDeps();
+    const gate = makeGate(d);
+
+    const out = await gate.selectForDispatch([makeScored('MLB1', 95)], 5);
+
+    expect(out).toHaveLength(1);
+    const stages = d.decisions.upserts.map((u: any) => u.stage);
+    expect(stages).not.toContain('source_warmup');
   });
 });

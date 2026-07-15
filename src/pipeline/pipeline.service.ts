@@ -9,7 +9,7 @@ import { DealScoreService } from '../deal-score/deal-score.service';
 import type { ScoredDeal } from '../deal-score/types';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
 import { SEND_DEAL_QUEUE_TOKEN } from '../queue/queue.module';
-import type { SendDealJob, TrustBadge } from '../queue/queue.types';
+import type { SendJob, TrustBadge } from '../queue/queue.types';
 import {
   EnrichedDeal,
   keyToString,
@@ -17,6 +17,7 @@ import {
   SourceId,
 } from '../sources/source.port';
 import { SourceRegistry } from '../sources/source-registry.service';
+import type { CopyVariant } from '../shared/variant';
 import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
 import { FormatterService } from './formatter.service';
@@ -36,7 +37,7 @@ export class PipelineService {
     private readonly dealScore: DealScoreService,
     private readonly targets: TargetsService,
     @Inject(SEND_DEAL_QUEUE_TOKEN)
-    private readonly sendQueue: Queue<SendDealJob>,
+    private readonly sendQueue: Queue<SendJob>,
   ) {}
 
   async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
@@ -128,23 +129,33 @@ export class PipelineService {
   }
 
   /**
-   * Enqueue the top `max` scored deals for every active target. One job per
-   * (deal × target) so a multi-broadcast publish doesn't block on the
-   * slowest send. The BullMQ worker (`SendDealWorker`) handles retries,
-   * dedup marking, and rate-limit backoff.
+   * Enqueue approved deals per active target, honoring a per-channel cap:
+   * MAX_DEALS_PER_RUN_WA for 'wa' targets, MAX_DEALS_PER_RUN_TELEGRAM for
+   * 'telegram' targets. `overrideMax` (manual /pipeline/run) caps both.
+   * The gate returns deals sorted by score desc, so slicing by index keeps
+   * the best deals on every channel.
    *
    * Falls back to `WA_TARGET_JID` when the TargetsService registry is empty
    * so single-target installs keep working without DB seeding.
    */
   async enqueueScored(
     scored: ScoredDeal[],
-    max: number,
+    overrideMax?: number,
   ): Promise<{
     enqueued: number;
     targets: number;
     topScore: number | null;
   }> {
-    const selected = await this.gate.selectForDispatch(scored, max);
+    const num = (k: string, def: number) =>
+      Number(this.config.get<string>(k, String(def)));
+    const waCap = overrideMax ?? num('MAX_DEALS_PER_RUN_WA', 4);
+    const tgCap = overrideMax ?? num('MAX_DEALS_PER_RUN_TELEGRAM', 10);
+    const digestSize = Math.max(1, num('WA_DIGEST_SIZE', 4));
+
+    const selected = await this.gate.selectForDispatch(
+      scored,
+      Math.max(waCap, tgCap),
+    );
     if (selected.length === 0) {
       return { enqueued: 0, targets: 0, topScore: null };
     }
@@ -171,11 +182,25 @@ export class PipelineService {
 
     const trustBadgeEnabled =
       this.config.get<string>('TRUST_BADGE_ENABLED', 'true') !== 'false';
+    const waTargets = activeTargets.filter((t) => t.channel !== 'telegram');
+    const tgTargets = activeTargets.filter((t) => t.channel === 'telegram');
 
     let enqueued = 0;
-    let topScore: number | null = null;
+    const topScore = selected[0]?.scored.score ?? null;
+    // catalogKey -> deal aprovado + flag "chegou em alguma fila"
+    const posted = new Map<
+      string,
+      { sd: ScoredDeal; variant: CopyVariant; sent: boolean }
+    >();
     for (const { scored: sd, variant } of selected) {
-      if (topScore === null) topScore = sd.score;
+      posted.set(keyToString(sd.deal.key), { sd, variant, sent: false });
+    }
+
+    const addSingle = async (
+      sd: ScoredDeal,
+      variant: CopyVariant,
+      target: { jid: string; channel?: 'wa' | 'telegram' },
+    ) => {
       const catalogKey = keyToString(sd.deal.key);
 
       let trustBadge: TrustBadge | undefined;
@@ -192,33 +217,76 @@ export class PipelineService {
         }
       }
 
-      let dealEnqueued = false;
-      for (const target of activeTargets) {
-        // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
-        // coalesce while waiting in the queue.
-        const jobId = `${catalogKey}:${target.jid}`;
+      // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
+      // coalesce while waiting in the queue.
+      const jobId = `${catalogKey}:${target.jid}`;
+      try {
+        await this.sendQueue.add(
+          'send-deal',
+          {
+            targetJid: target.jid,
+            channel: target.channel,
+            catalogKey,
+            scored: sd,
+            variant,
+            trustBadge,
+          },
+          { jobId },
+        );
+        enqueued++;
+        posted.get(catalogKey)!.sent = true;
+      } catch (err) {
+        this.logger.error(`enqueue ${jobId} failed: ${(err as Error).message}`);
+      }
+    };
+
+    // Telegram: 1 job por (deal × target), como sempre.
+    for (const { scored: sd, variant } of selected.slice(0, tgCap)) {
+      for (const target of tgTargets) await addSingle(sd, variant, target);
+    }
+
+    // WhatsApp: chunks de até WA_DIGEST_SIZE viram 1 mensagem; chunk de 1
+    // continua job individual (digest de uma oferta não faz sentido).
+    const waSelected = selected.slice(0, waCap);
+    for (let c = 0; c < waSelected.length; c += digestSize) {
+      const chunk = waSelected.slice(c, c + digestSize);
+      if (chunk.length === 1) {
+        for (const target of waTargets) {
+          await addSingle(chunk[0].scored, chunk[0].variant, target);
+        }
+        continue;
+      }
+      const keys = chunk.map(({ scored: sd }) => keyToString(sd.deal.key));
+      const digestId = `dg-${Date.now()}-${c / digestSize}`;
+      for (const target of waTargets) {
+        const jobId = `digest:${target.jid}:${keys.join('+')}`;
         try {
           await this.sendQueue.add(
-            'send-deal',
+            'send-digest',
             {
               targetJid: target.jid,
-              channel: target.channel,
-              catalogKey,
-              scored: sd,
-              variant,
-              trustBadge,
+              channel: 'wa',
+              digestId,
+              deals: chunk.map(({ scored: sd, variant }) => ({
+                catalogKey: keyToString(sd.deal.key),
+                variant,
+                scored: sd,
+              })),
             },
             { jobId },
           );
           enqueued++;
-          dealEnqueued = true;
+          for (const k of keys) posted.get(k)!.sent = true;
         } catch (err) {
           this.logger.error(
             `enqueue ${jobId} failed: ${(err as Error).message}`,
           );
         }
       }
-      if (dealEnqueued) await this.gate.recordPosted(sd, variant);
+    }
+
+    for (const { sd, variant, sent } of posted.values()) {
+      if (sent) await this.gate.recordPosted(sd, variant);
     }
 
     this.logger.log(
@@ -247,11 +315,9 @@ export class PipelineService {
 
   async runOnce(opts?: { sourceId?: SourceId; max?: number }) {
     const sourceId: SourceId = opts?.sourceId ?? 'ml';
-    const max =
-      opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
 
     const scored = await this.collectScored(sourceId);
-    const result = await this.enqueueScored(scored, max);
+    const result = await this.enqueueScored(scored, opts?.max);
     return {
       enqueued: result.enqueued,
       targets: result.targets,

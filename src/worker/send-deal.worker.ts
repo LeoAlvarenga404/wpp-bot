@@ -12,7 +12,12 @@ import { DedupService } from '../dedup/dedup.service';
 import { CountersService } from '../metrics/counters.service';
 import { FormatterService } from '../pipeline/formatter.service';
 import { PublisherRegistry } from '../publisher/publisher-registry.service';
-import { SEND_DEAL_QUEUE, SendDealJob } from '../queue/queue.types';
+import {
+  SEND_DEAL_QUEUE,
+  SendDealJob,
+  SendDigestJob,
+  SendJob,
+} from '../queue/queue.types';
 import { keyToString } from '../sources/source.port';
 
 /**
@@ -30,7 +35,7 @@ import { keyToString } from '../sources/source.port';
 @Injectable()
 export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SendDealWorker.name);
-  private worker: Worker<SendDealJob> | null = null;
+  private worker: Worker<SendJob> | null = null;
 
   constructor(
     @Inject('REDIS_CONNECTION_OPTIONS')
@@ -43,7 +48,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.worker = new Worker<SendDealJob>(
+    this.worker = new Worker<SendJob>(
       SEND_DEAL_QUEUE,
       async (job) => this.process(job),
       {
@@ -79,7 +84,47 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     await this.worker?.close();
   }
 
-  private async process(job: Job<SendDealJob>): Promise<void> {
+  private async process(job: Job<SendJob>): Promise<void> {
+    if (job.name === 'send-digest') {
+      return this.processDigest(job as Job<SendDigestJob>);
+    }
+    return this.processSingle(job as Job<SendDealJob>);
+  }
+
+  private async processDigest(job: Job<SendDigestJob>): Promise<void> {
+    const { targetJid, deals, digestId } = job.data;
+
+    const publisher = this.publishers.get('wa');
+    const { caption, imageUrl } = await this.formatter.formatDigest(
+      deals.map((d) => ({ scored: d.scored, variant: d.variant })),
+    );
+    await publisher.publish({ caption, imageUrl }, targetJid);
+
+    for (const d of deals) {
+      await this.dedup.markPosted(d.catalogKey);
+      try {
+        await (this.prisma as any).sentMessage.create({
+          data: {
+            catalogId: d.catalogKey,
+            targetJid,
+            caption,
+            variant: d.variant,
+            digestId,
+          },
+        });
+      } catch (err) {
+        // Audit row must never fail a job that already published.
+        this.logger.warn(
+          `sentMessage audit insert failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    this.logger.log(
+      `send-digest job ${job.id} ok (${deals.length} deals -> ${targetJid})`,
+    );
+  }
+
+  private async processSingle(job: Job<SendDealJob>): Promise<void> {
     const { targetJid, scored } = job.data;
     const channel = job.data.channel ?? 'wa';
     const keyStr = keyToString(scored.deal.key);
