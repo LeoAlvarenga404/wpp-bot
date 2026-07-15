@@ -84,14 +84,18 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     const channel = job.data.channel ?? 'wa';
     const keyStr = keyToString(scored.deal.key);
 
+    const variant = job.data.variant ?? 'A';
     const publisher = this.publishers.get(channel);
-    const { caption, imageUrl } = await this.formatter.formatScored(scored);
+    const { caption, imageUrl } = await this.formatter.formatScored(
+      scored,
+      variant,
+    );
     await publisher.publish({ caption, imageUrl }, targetJid);
 
     await this.dedup.markPosted(keyStr);
     try {
       await (this.prisma as any).sentMessage.create({
-        data: { catalogId: keyStr, targetJid, caption },
+        data: { catalogId: keyStr, targetJid, caption, variant },
       });
     } catch (err) {
       // Audit row must never fail a job that already published.

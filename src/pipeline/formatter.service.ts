@@ -5,7 +5,9 @@ import { HEADLINE_GENERATOR } from '../headline/headline.port';
 import type { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
+import type { CopyVariant } from '../shared/variant';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
+import { variantBByLevel } from './templates/variants';
 
 function scoredDealToHeadlineItem(scored: ScoredDeal): DealItem {
   const raw = scored.deal.raw;
@@ -75,6 +77,7 @@ export class FormatterService {
 
   async formatScored(
     scored: ScoredDeal,
+    variant: CopyVariant = 'A',
   ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
@@ -84,13 +87,13 @@ export class FormatterService {
     ]);
     const formatBRL = (n: number) => this.formatBRL(n);
 
-    const tmpl =
-      scored.level === 'super'
-        ? templatesByLevel.super
-        : scored.level === 'top'
-          ? templatesByLevel.top
-          : templatesByLevel.good;
     // 'rejected' level never reaches dispatch; fall back to good template defensively.
+    const level =
+      scored.level === 'super' || scored.level === 'top'
+        ? scored.level
+        : 'good';
+    const byLevel = variant === 'B' ? variantBByLevel : templatesByLevel;
+    const tmpl = byLevel[level];
 
     const caption = `${tmpl(scored, formatBRL, link, hook)}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');

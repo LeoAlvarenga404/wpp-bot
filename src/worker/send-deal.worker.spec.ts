@@ -48,6 +48,7 @@ function makeJob(channel?: 'wa' | 'telegram') {
       targetJid: '-100555',
       channel,
       catalogKey: 'ml:MLB1',
+      variant: 'B',
       scored: {
         deal: { key: { source: 'ml', externalId: 'MLB1' }, raw: {} },
         score: 80,
@@ -70,9 +71,32 @@ describe('SendDealWorker.process', () => {
       '-100555',
     );
     expect(d.dedup.markPosted).toHaveBeenCalledWith('ml:MLB1');
+    expect(d.formatter.formatScored).toHaveBeenCalledWith(
+      expect.anything(),
+      'B',
+    );
     expect(d.prisma.sentMessage.create).toHaveBeenCalledWith({
-      data: { catalogId: 'ml:MLB1', targetJid: '-100555', caption: 'cap' },
+      data: {
+        catalogId: 'ml:MLB1',
+        targetJid: '-100555',
+        caption: 'cap',
+        variant: 'B',
+      },
     });
+  });
+
+  it('defaults variant to A for legacy jobs', async () => {
+    const d = makeDeps();
+    const worker = makeWorker(d);
+    const job = makeJob('telegram');
+    delete job.data.variant;
+
+    await (worker as any).process(job);
+
+    expect(d.formatter.formatScored).toHaveBeenCalledWith(
+      expect.anything(),
+      'A',
+    );
   });
 
   it('defaults channel to wa for legacy jobs', async () => {
