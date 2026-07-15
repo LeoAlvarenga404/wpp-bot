@@ -18,6 +18,9 @@ export class CountersService {
   public readonly affiliateCacheHits: Counter<string>;
   public readonly affiliateCacheMisses: Counter<string>;
   public readonly dedupSkip: Counter<string>;
+  public readonly judgeApprove: Counter<string>;
+  public readonly judgeReject: Counter<string>;
+  public readonly judgeError: Counter<string>;
   public readonly baileysConnected: Gauge<string>;
 
   constructor() {
@@ -68,6 +71,24 @@ export class CountersService {
     this.dedupSkip = new Counter({
       name: 'dedup_skip_total',
       help: 'Total items skipped by dedup',
+      registers: [this.register],
+    });
+
+    this.judgeApprove = new Counter({
+      name: 'curation_judge_approve_total',
+      help: 'Gray-zone deals approved by the LLM judge',
+      registers: [this.register],
+    });
+
+    this.judgeReject = new Counter({
+      name: 'curation_judge_reject_total',
+      help: 'Gray-zone deals rejected by the LLM judge',
+      registers: [this.register],
+    });
+
+    this.judgeError = new Counter({
+      name: 'curation_judge_error_total',
+      help: 'Judge calls that failed (fail-closed: deal not posted)',
       registers: [this.register],
     });
 
