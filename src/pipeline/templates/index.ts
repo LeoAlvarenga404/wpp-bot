@@ -8,6 +8,7 @@ export type ScoredCaptionTemplate = (
   formatBRL: (n: number) => string,
   link: string,
   hook: string,
+  trustLine?: string | null,
 ) => string;
 
 export const templatesByLevel: Record<

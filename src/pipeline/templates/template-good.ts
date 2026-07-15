@@ -7,6 +7,7 @@ export const goodTemplate = (
   formatBRL: (n: number) => string,
   link: string,
   hook: string,
+  trustLine?: string | null,
 ): string => {
   const raw = sd.deal.raw;
   const price = raw.priceCents / 100;
@@ -17,6 +18,10 @@ export const goodTemplate = (
   lines.push(`📦 ${raw.title}`);
   lines.push(`💰 *${formatBRL(price)}* (-${raw.discountPercent}%)`);
   if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
+  if (trustLine) {
+    lines.push('');
+    lines.push(trustLine);
+  }
   lines.push('');
   lines.push(`🛒 ${link}`);
   return lines.join('\n');

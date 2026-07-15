@@ -6,6 +6,7 @@ import type { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
 import type { CopyVariant } from '../shared/variant';
+import type { TrustBadge } from '../queue/queue.types';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
 import { variantBByLevel } from './templates/variants';
 
@@ -78,6 +79,7 @@ export class FormatterService {
   async formatScored(
     scored: ScoredDeal,
     variant: CopyVariant = 'A',
+    trustBadge?: TrustBadge,
   ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
@@ -95,7 +97,11 @@ export class FormatterService {
     const byLevel = variant === 'B' ? variantBByLevel : templatesByLevel;
     const tmpl = byLevel[level];
 
-    const caption = `${tmpl(scored, formatBRL, link, hook)}\n\n${this.disclaimerLine()}`;
+    const trustLine = trustBadge
+      ? `${trustBadge.label} ✓ monitorado há ${trustBadge.monitoredDays} dias`
+      : null;
+
+    const caption = `${tmpl(scored, formatBRL, link, hook, trustLine)}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
   }

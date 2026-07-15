@@ -21,34 +21,37 @@ function dePorBlock(
   return lines;
 }
 
-const goodB: ScoredCaptionTemplate = (sd, formatBRL, link, hook) => {
+const goodB: ScoredCaptionTemplate = (sd, formatBRL, link, hook, trustLine) => {
   const lines: string[] = [];
   if (hook) lines.push(hook, '');
   lines.push(`📦 ${sd.deal.raw.title}`, '');
   lines.push(...dePorBlock(sd, formatBRL));
   if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
+  if (trustLine) lines.push('', trustLine);
   lines.push('', `👉 Garante aqui: ${link}`);
   return lines.join('\n');
 };
 
-const topB: ScoredCaptionTemplate = (sd, formatBRL, link, hook) => {
+const topB: ScoredCaptionTemplate = (sd, formatBRL, link, hook, trustLine) => {
   const lines: string[] = ['🔥 ACHADO DO DIA'];
   if (hook) lines.push(hook);
   lines.push('', `📦 ${sd.deal.raw.title}`, '');
   lines.push(...dePorBlock(sd, formatBRL));
   if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
   if (sd.deal.signals.isVerifiedStore) lines.push('🏬 Loja oficial');
+  if (trustLine) lines.push('', trustLine);
   lines.push('', `👉 Corre: ${link}`);
   return lines.join('\n');
 };
 
-const superB: ScoredCaptionTemplate = (sd, formatBRL, link, hook) => {
+const superB: ScoredCaptionTemplate = (sd, formatBRL, link, hook, trustLine) => {
   const lines: string[] = ['🚨 RARO DE VER 🚨'];
   if (hook) lines.push(hook);
   lines.push('', `📦 ${sd.deal.raw.title}`, '');
   lines.push(...dePorBlock(sd, formatBRL));
   if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
   if (sd.deal.signals.isVerifiedStore) lines.push('🏬 Loja oficial');
+  if (trustLine) lines.push('', trustLine);
   lines.push('', '⏳ Preço assim não dura.', `👉 ${link}`);
   return lines.join('\n');
 };

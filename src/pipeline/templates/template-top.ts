@@ -7,6 +7,7 @@ export const topTemplate = (
   formatBRL: (n: number) => string,
   link: string,
   hook: string,
+  trustLine?: string | null,
 ): string => {
   const raw = sd.deal.raw;
   const price = raw.priceCents / 100;
@@ -22,7 +23,7 @@ export const topTemplate = (
   if (sd.deal.signals.freeShipping) extras.push('🚚 frete grátis');
   if (extras.length) lines.push(extras.join(' · '));
   lines.push('');
-  const historyLine = pickHistoryLine(sd);
+  const historyLine = trustLine ?? pickHistoryLine(sd);
   if (historyLine) lines.push(historyLine);
   lines.push('');
   lines.push(`🛒 ${link}`);

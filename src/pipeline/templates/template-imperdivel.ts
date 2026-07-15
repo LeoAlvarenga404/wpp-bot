@@ -7,6 +7,7 @@ export const imperdivelTemplate = (
   formatBRL: (n: number) => string,
   link: string,
   hook: string,
+  trustLine?: string | null,
 ): string => {
   const raw = sd.deal.raw;
   const price = raw.priceCents / 100;
@@ -23,7 +24,7 @@ export const imperdivelTemplate = (
   if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
   lines.push('');
 
-  const historyLine = pickHistoryLine(sd);
+  const historyLine = trustLine ?? pickHistoryLine(sd);
   if (historyLine) lines.push(historyLine);
 
   const sellerLine = pickSellerLine(sd);
