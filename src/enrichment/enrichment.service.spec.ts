@@ -133,6 +133,30 @@ describe('EnrichmentService', () => {
     await expect(svc.enrich(dealA)).rejects.toBeTruthy();
   });
 
+  // ML now returns 403 on /items/{id} for items the app does not own. That
+  // must NOT discard the seller data (which comes back 200) — otherwise every
+  // deal reads as "vendedor não identificado" and the judge rejects it.
+  it('keeps seller when /items is 403 (ML restricts non-owned items)', async () => {
+    const forbidden = throwError(() => ({ response: { status: 403 } }));
+    const http = fakeHttp({
+      '/users/7': of({
+        data: {
+          id: 7,
+          nickname: 'SHOP',
+          seller_reputation: {
+            level_id: '5_green',
+            power_seller_status: 'platinum',
+          },
+        },
+      }),
+      '/items/MLBI1': forbidden,
+    });
+    const svc = new EnrichmentService(http, fakeAuth, fakeCache as any);
+    const out = await svc.enrich(dealA);
+    expect(out.seller?.reputationLevel).toBe('5_green');
+    expect(out.item).toBeNull();
+  });
+
   it('enrichMany processes deals in batches', async () => {
     const http = fakeHttp({
       '/users/': of({

@@ -21,17 +21,20 @@ export class EnrichmentService {
   ) {}
 
   async enrich(deal: DealItem): Promise<EnrichedDeal> {
+    // ML now answers 403 on /items/{id} for items the app does not own, and
+    // 404 when a resource is gone. Both are terminal, per-resource conditions
+    // that must degrade to null WITHOUT discarding the sibling call — a 403 on
+    // the item must not throw away seller reputation that came back 200, or
+    // every deal reads as "vendedor não identificado" and the judge rejects it.
+    // 5xx/network errors still propagate so enrichMany can fall back and log.
+    const nonFatal = (err: any): null => {
+      const status = err?.response?.status;
+      if (status === 403 || status === 404) return null;
+      throw err;
+    };
     const [seller, item] = await Promise.all([
-      this.getSeller(deal.sellerId).catch((err) => {
-        const status = err?.response?.status;
-        if (status === 404) return null;
-        throw err;
-      }),
-      this.getItem(deal.itemId).catch((err) => {
-        const status = err?.response?.status;
-        if (status === 404) return null;
-        throw err;
-      }),
+      this.getSeller(deal.sellerId).catch(nonFatal),
+      this.getItem(deal.itemId).catch(nonFatal),
     ]);
     return { ...deal, seller, item };
   }
