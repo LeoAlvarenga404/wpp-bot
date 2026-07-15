@@ -7,12 +7,13 @@ import {
 } from '@nestjs/common';
 import { Job, Worker } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
+import { PrismaService } from '../db/prisma.service';
 import { DedupService } from '../dedup/dedup.service';
 import { CountersService } from '../metrics/counters.service';
 import { FormatterService } from '../pipeline/formatter.service';
+import { PublisherRegistry } from '../publisher/publisher-registry.service';
 import { SEND_DEAL_QUEUE, SendDealJob } from '../queue/queue.types';
 import { keyToString } from '../sources/source.port';
-import { WhatsappService } from '../whatsapp/wa.service';
 
 /**
  * Worker that consumes `send-deal` jobs and dispatches them through Baileys.
@@ -34,9 +35,10 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject('REDIS_CONNECTION_OPTIONS')
     private readonly connection: ConnectionOptions,
-    private readonly wa: WhatsappService,
+    private readonly publishers: PublisherRegistry,
     private readonly formatter: FormatterService,
     private readonly dedup: DedupService,
+    private readonly prisma: PrismaService,
     private readonly counters: CountersService,
   ) {}
 
@@ -66,9 +68,8 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     });
 
     this.worker.on('completed', (job) => {
-      const scored = job.data.scored;
-      const category = scored.deal.key.source ?? 'unknown';
-      this.counters.wppMessagesSent.labels(category).inc();
+      const channel = job.data.channel ?? 'wa';
+      this.counters.wppMessagesSent.labels(channel).inc();
     });
 
     this.logger.log(`SendDealWorker listening on queue=${SEND_DEAL_QUEUE}`);
@@ -80,21 +81,26 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
 
   private async process(job: Job<SendDealJob>): Promise<void> {
     const { targetJid, scored } = job.data;
+    const channel = job.data.channel ?? 'wa';
     const keyStr = keyToString(scored.deal.key);
 
-    if (!this.wa.isReady()) {
-      throw new Error('whatsapp_not_ready');
-    }
-
+    const publisher = this.publishers.get(channel);
     const { caption, imageUrl } = await this.formatter.formatScored(scored);
-    if (imageUrl) {
-      await this.wa.sendImage(targetJid, imageUrl, caption);
-    } else {
-      await this.wa.sendText(targetJid, caption);
-    }
+    await publisher.publish({ caption, imageUrl }, targetJid);
+
     await this.dedup.markPosted(keyStr);
+    try {
+      await (this.prisma as any).sentMessage.create({
+        data: { catalogId: keyStr, targetJid, caption },
+      });
+    } catch (err) {
+      // Audit row must never fail a job that already published.
+      this.logger.warn(
+        `sentMessage audit insert failed: ${(err as Error).message}`,
+      );
+    }
     this.logger.log(
-      `send-deal job ${job.id} ok (${keyStr} -> ${targetJid}, level=${scored.level}, score=${scored.score})`,
+      `send-deal job ${job.id} ok (${keyStr} -> ${targetJid} via ${channel}, level=${scored.level}, score=${scored.score})`,
     );
   }
 

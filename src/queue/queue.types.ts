@@ -4,6 +4,9 @@ export const SEND_DEAL_QUEUE = 'send-deal';
 
 export interface SendDealJob {
   targetJid: string;
+  /** Publisher channel. Optional so jobs already sitting in Redis
+   *  (pre-upgrade) still process as WhatsApp. */
+  channel?: 'wa' | 'telegram';
   /** Catalog key string (source:externalId) — also doubles as the BullMQ
    *  job id so duplicate enqueues for the same (deal, target) coalesce. */
   catalogKey: string;
