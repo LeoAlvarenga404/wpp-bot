@@ -32,11 +32,19 @@ function sample(sellerId: number, fetchedAt: string): SellerInfo {
 
 describe('SellerCacheService', () => {
   beforeEach(async () => {
-    try { await fs.unlink(TMP_FILE); } catch { /* ok */ }
+    try {
+      await fs.unlink(TMP_FILE);
+    } catch {
+      /* ok */
+    }
   });
 
   afterAll(async () => {
-    try { await fs.unlink(TMP_FILE); } catch { /* ok */ }
+    try {
+      await fs.unlink(TMP_FILE);
+    } catch {
+      /* ok */
+    }
   });
 
   it('get() within TTL returns the cached value', async () => {

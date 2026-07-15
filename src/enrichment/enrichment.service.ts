@@ -41,10 +41,12 @@ export class EnrichmentService {
     for (let i = 0; i < deals.length; i += PARALLEL_LIMIT) {
       const batch = deals.slice(i, i + PARALLEL_LIMIT);
       const results = await Promise.all(
-        batch.map((d) => this.enrich(d).catch((err) => {
-          this.logger.warn(`enrich ${d.catalogId} failed: ${err?.message}`);
-          return { ...d, seller: null, item: null } as EnrichedDeal;
-        })),
+        batch.map((d) =>
+          this.enrich(d).catch((err) => {
+            this.logger.warn(`enrich ${d.catalogId} failed: ${err?.message}`);
+            return { ...d, seller: null, item: null };
+          }),
+        ),
       );
       out.push(...results);
     }
@@ -78,10 +80,12 @@ export class EnrichmentService {
       installments.rate === 0;
     let condition: ItemDetails['condition'] = 'not_specified';
     const raw = (data?.condition ?? '').toString().toLowerCase();
-    if (raw === 'new' || raw === 'used' || raw === 'refurbished') condition = raw;
+    if (raw === 'new' || raw === 'used' || raw === 'refurbished')
+      condition = raw;
     return {
       itemId,
-      soldQuantity: typeof data?.sold_quantity === 'number' ? data.sold_quantity : null,
+      soldQuantity:
+        typeof data?.sold_quantity === 'number' ? data.sold_quantity : null,
       condition,
       hasInstallmentsNoInterest: hasNoInterest,
     };

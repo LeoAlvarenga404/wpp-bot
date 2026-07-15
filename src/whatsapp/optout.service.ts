@@ -72,10 +72,14 @@ export class OptoutService implements OnModuleInit {
       return;
     }
     const arr =
-      parsed && typeof parsed === 'object' && Array.isArray((parsed as any).jids)
+      parsed &&
+      typeof parsed === 'object' &&
+      Array.isArray((parsed as any).jids)
         ? ((parsed as any).jids as unknown[])
         : [];
-    const jids = arr.filter((j): j is string => typeof j === 'string' && j.length > 0);
+    const jids = arr.filter(
+      (j): j is string => typeof j === 'string' && j.length > 0,
+    );
     if (jids.length === 0) return;
 
     try {

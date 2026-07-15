@@ -10,7 +10,10 @@ export type ScoredCaptionTemplate = (
   hook: string,
 ) => string;
 
-export const templatesByLevel: Record<'good' | 'top' | 'super', ScoredCaptionTemplate> = {
+export const templatesByLevel: Record<
+  'good' | 'top' | 'super',
+  ScoredCaptionTemplate
+> = {
   good: goodTemplate,
   top: topTemplate,
   super: imperdivelTemplate,

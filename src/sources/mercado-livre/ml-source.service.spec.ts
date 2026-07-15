@@ -24,31 +24,34 @@ function makeMlDeal(id: string): DealItem {
 
 function makeDeps(opts: { feeds: { feedId: string; weight: number }[] }) {
   const ml = {
-    getDealsFromHighlights: jest.fn(async ({ category }: { category: string }) => [
-      makeMlDeal(`${category}_DEAL`),
-    ]),
+    getDealsFromHighlights: jest.fn(
+      async ({ category }: { category: string }) => [
+        makeMlDeal(`${category}_DEAL`),
+      ],
+    ),
   } as unknown as MercadoLivreService;
   const enrichment = {
-    enrichMany: jest.fn(async (deals: DealItem[]): Promise<MLEnriched[]> =>
-      deals.map((d) => ({
-        ...d,
-        seller: {
-          sellerId: d.sellerId,
-          nickname: 's',
-          powerSellerStatus: 'gold',
-          reputationLevel: '5_green',
-          isOfficialStore: false,
-          officialStoreId: null,
-          ratingAverage: 4.5,
-          fetchedAt: '2026-05-14T00:00:00.000Z',
-        },
-        item: {
-          itemId: d.itemId,
-          soldQuantity: 50,
-          condition: 'new',
-          hasInstallmentsNoInterest: true,
-        },
-      })),
+    enrichMany: jest.fn(
+      async (deals: DealItem[]): Promise<MLEnriched[]> =>
+        deals.map((d) => ({
+          ...d,
+          seller: {
+            sellerId: d.sellerId,
+            nickname: 's',
+            powerSellerStatus: 'gold',
+            reputationLevel: '5_green',
+            isOfficialStore: false,
+            officialStoreId: null,
+            ratingAverage: 4.5,
+            fetchedAt: '2026-05-14T00:00:00.000Z',
+          },
+          item: {
+            itemId: d.itemId,
+            soldQuantity: 50,
+            condition: 'new',
+            hasInstallmentsNoInterest: true,
+          },
+        })),
     ),
   } as unknown as EnrichmentService;
   const rotator = {

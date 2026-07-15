@@ -32,7 +32,9 @@ class InMemoryDedupRepo implements DedupRepo {
   async count(): Promise<number> {
     return this.store.size;
   }
-  async importMany(entries: Array<{ catalogId: string; postedAt: Date }>): Promise<void> {
+  async importMany(
+    entries: Array<{ catalogId: string; postedAt: Date }>,
+  ): Promise<void> {
     for (const e of entries) {
       if (!this.store.has(e.catalogId)) this.store.set(e.catalogId, e.postedAt);
     }
@@ -63,7 +65,11 @@ describe('DedupService', () => {
   afterEach(async () => {
     while (cleanup.length) {
       const d = cleanup.pop()!;
-      try { await fs.rm(d, { recursive: true, force: true }); } catch { /* ignore */ }
+      try {
+        await fs.rm(d, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
     }
   });
 

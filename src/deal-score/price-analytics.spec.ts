@@ -4,7 +4,9 @@ import { analyze, detectPriceRaiseBeforeDiscount } from './price-analytics';
 import { PriceObservation } from './types';
 
 function obs(priceCents: number, daysAgo: number, now: Date): PriceObservation {
-  const at = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+  const at = new Date(
+    now.getTime() - daysAgo * 24 * 60 * 60 * 1000,
+  ).toISOString();
   return { priceCents, at };
 }
 
@@ -172,10 +174,7 @@ describe('detectPriceRaiseBeforeDiscount()', () => {
   });
 
   it('returns suspicious=false with missing baseline', () => {
-    const observations = [
-      obs(15000, 10, now),
-      obs(15000, 7, now),
-    ];
+    const observations = [obs(15000, 10, now), obs(15000, 7, now)];
     const r = detectPriceRaiseBeforeDiscount(
       { observations, now },
       12000,
@@ -186,7 +185,11 @@ describe('detectPriceRaiseBeforeDiscount()', () => {
   });
 
   it('returns suspicious=false with no observations', () => {
-    const r = detectPriceRaiseBeforeDiscount({ observations: [], now }, 12000, opts);
+    const r = detectPriceRaiseBeforeDiscount(
+      { observations: [], now },
+      12000,
+      opts,
+    );
     expect(r.suspicious).toBe(false);
     expect(r.peakInWindowCents).toBeNull();
     expect(r.baselinePreWindowCents).toBeNull();

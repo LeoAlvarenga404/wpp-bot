@@ -4,12 +4,17 @@ import { keyToString, parseKey, ProductKey } from './source.port';
 
 describe('source.port helpers', () => {
   it('keyToString joins source and externalId with a colon', () => {
-    expect(keyToString({ source: 'ml', externalId: 'MLB1234' })).toBe('ml:MLB1234');
+    expect(keyToString({ source: 'ml', externalId: 'MLB1234' })).toBe(
+      'ml:MLB1234',
+    );
   });
 
   it('parseKey splits on the first colon only', () => {
     const k = parseKey('ml:weird:id:with:colons');
-    expect(k).toEqual<ProductKey>({ source: 'ml', externalId: 'weird:id:with:colons' });
+    expect(k).toEqual<ProductKey>({
+      source: 'ml',
+      externalId: 'weird:id:with:colons',
+    });
   });
 
   it('parseKey returns null for empty input', () => {

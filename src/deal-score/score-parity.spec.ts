@@ -5,7 +5,9 @@ import { DealScoreService } from './deal-score.service';
 import type { EnrichedDeal } from '../sources/source.port';
 import type { PriceAnalytics } from './types';
 
-const config = { get: (k: string, def?: string) => def } as unknown as ConfigService;
+const config = {
+  get: (k: string, def?: string) => def,
+} as unknown as ConfigService;
 const svc = new DealScoreService(config);
 
 const baseDeal = (over: Partial<EnrichedDeal> = {}): EnrichedDeal => ({

@@ -27,7 +27,9 @@ export class PrismaTargetsRepo implements TargetsRepo {
   }
 
   async findOne(jid: string): Promise<WaTarget | null> {
-    const r = await (this.prisma as any).waTarget.findUnique({ where: { jid } });
+    const r = await (this.prisma as any).waTarget.findUnique({
+      where: { jid },
+    });
     return r ? { jid: r.jid, name: r.name ?? r.jid, active: r.active } : null;
   }
 
@@ -41,7 +43,9 @@ export class PrismaTargetsRepo implements TargetsRepo {
   }
 
   async delete(jid: string): Promise<boolean> {
-    const res = await (this.prisma as any).waTarget.deleteMany({ where: { jid } });
+    const res = await (this.prisma as any).waTarget.deleteMany({
+      where: { jid },
+    });
     return (res.count as number) > 0;
   }
 

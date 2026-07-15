@@ -2,12 +2,19 @@
 
 jest.mock('@whiskeysockets/baileys', () => ({}));
 jest.mock('@hapi/boom', () => ({ Boom: class Boom {} }));
-jest.mock('@sentry/node', () => ({ captureException: jest.fn(), init: jest.fn() }));
+jest.mock('@sentry/node', () => ({
+  captureException: jest.fn(),
+  init: jest.fn(),
+}));
 jest.mock('../whatsapp/wa.service');
 
 import { ConfigService } from '@nestjs/config';
 import { PipelineService } from './pipeline.service';
-import type { DealSourcePort, RawDeal, EnrichedDeal } from '../sources/source.port';
+import type {
+  DealSourcePort,
+  RawDeal,
+  EnrichedDeal,
+} from '../sources/source.port';
 import type { ScoredDeal } from '../deal-score/types';
 
 function rawFor(id: string, priceCents = 10000): RawDeal {
@@ -63,7 +70,11 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
   } as any;
 
   const ml = { getDealsFromHighlights: jest.fn() } as any; // unused — kept for legacy DI
-  const wa = { isReady: () => true, sendImage: jest.fn(), sendText: jest.fn() } as any;
+  const wa = {
+    isReady: () => true,
+    sendImage: jest.fn(),
+    sendText: jest.fn(),
+  } as any;
   const formatter = {
     formatScored: jest.fn(async () => ({ caption: 'cap', imageUrl: '' })),
   } as any;
@@ -100,7 +111,9 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
       }),
     ),
   } as any;
-  const config = { get: (_k: string, def?: string) => def } as unknown as ConfigService;
+  const config = {
+    get: (_k: string, def?: string) => def,
+  } as unknown as ConfigService;
 
   const targets = {
     getActiveJids: jest.fn(async () => [] as string[]),
@@ -161,14 +174,28 @@ describe('PipelineService.collectScored(sourceId)', () => {
   it('scores survivors and returns sorted desc', async () => {
     const d = makeDeps({ rawDeals: [rawFor('MLB1'), rawFor('MLB2')] });
     (d.dealScore.computeWithObservations as jest.Mock)
-      .mockImplementationOnce((e: EnrichedDeal): ScoredDeal => ({
-        deal: e as any, score: 70, rawScore: 70, level: 'good',
-        reasons: [], penalties: [], factors: {},
-      }))
-      .mockImplementationOnce((e: EnrichedDeal): ScoredDeal => ({
-        deal: e as any, score: 90, rawScore: 90, level: 'top',
-        reasons: [], penalties: [], factors: {},
-      }));
+      .mockImplementationOnce(
+        (e: EnrichedDeal): ScoredDeal => ({
+          deal: e,
+          score: 70,
+          rawScore: 70,
+          level: 'good',
+          reasons: [],
+          penalties: [],
+          factors: {},
+        }),
+      )
+      .mockImplementationOnce(
+        (e: EnrichedDeal): ScoredDeal => ({
+          deal: e,
+          score: 90,
+          rawScore: 90,
+          level: 'top',
+          reasons: [],
+          penalties: [],
+          factors: {},
+        }),
+      );
     const out = await d.pipeline.collectScored('ml');
     // After filtering (default MIN=75) only the 90 survives:
     expect(out.map((s) => s.score)).toEqual([90]);

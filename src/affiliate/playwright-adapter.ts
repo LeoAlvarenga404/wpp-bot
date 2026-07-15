@@ -401,9 +401,7 @@ export class PlaywrightAffiliateAdapter
       );
       for (const r of rows) this.cache.set(r.longUrl, r.shortUrl);
     } catch (err) {
-      this.logger.warn(
-        `affiliate backfill failed: ${(err as Error).message}`,
-      );
+      this.logger.warn(`affiliate backfill failed: ${(err as Error).message}`);
     }
   }
 

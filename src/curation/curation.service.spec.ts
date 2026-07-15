@@ -20,7 +20,9 @@ class InMemoryCurationRepo implements CurationRepo {
   }
   async pruneOlderThan(cutoff: Date): Promise<number> {
     const before = this.rows.length;
-    this.rows = this.rows.filter((r) => r.capturedAt.getTime() >= cutoff.getTime());
+    this.rows = this.rows.filter(
+      (r) => r.capturedAt.getTime() >= cutoff.getTime(),
+    );
     return before - this.rows.length;
   }
   async count(): Promise<number> {
@@ -31,7 +33,10 @@ class InMemoryCurationRepo implements CurationRepo {
   }
 }
 
-async function withTmpFile(): Promise<{ jsonPath: string; cleanup: () => Promise<void> }> {
+async function withTmpFile(): Promise<{
+  jsonPath: string;
+  cleanup: () => Promise<void>;
+}> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wpp-curation-'));
   const jsonPath = path.join(dir, 'price-history.json');
   return {
@@ -52,7 +57,10 @@ function makeService(
   if (jsonBackfillPath) {
     (svc as any).jsonBackfillPath = jsonBackfillPath;
   } else {
-    (svc as any).jsonBackfillPath = path.join(os.tmpdir(), `wpp-no-such-${Date.now()}.json`);
+    (svc as any).jsonBackfillPath = path.join(
+      os.tmpdir(),
+      `wpp-no-such-${Date.now()}.json`,
+    );
   }
   return svc;
 }
@@ -97,7 +105,9 @@ describe('CurationService', () => {
   });
 
   it('getLowestPriceBadge: emits 30d badge when price <= min30d', async () => {
-    const svc = makeService(new InMemoryCurationRepo(), { CURATION_MIN_HISTORY_DAYS: '0' });
+    const svc = makeService(new InMemoryCurationRepo(), {
+      CURATION_MIN_HISTORY_DAYS: '0',
+    });
     await svc.onModuleInit();
     await svc.record('MLB1', 10000);
     const badge = svc.getLowestPriceBadge('MLB1', 9000);

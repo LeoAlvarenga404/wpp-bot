@@ -17,7 +17,9 @@ export class PrismaOptoutRepo implements OptoutRepo {
   constructor(private readonly prisma: PrismaService) {}
 
   async has(jid: string): Promise<boolean> {
-    const r = await (this.prisma as any).waOptout.findUnique({ where: { jid } });
+    const r = await (this.prisma as any).waOptout.findUnique({
+      where: { jid },
+    });
     return !!r;
   }
 
@@ -35,7 +37,9 @@ export class PrismaOptoutRepo implements OptoutRepo {
   }
 
   async remove(jid: string): Promise<boolean> {
-    const res = await (this.prisma as any).waOptout.deleteMany({ where: { jid } });
+    const res = await (this.prisma as any).waOptout.deleteMany({
+      where: { jid },
+    });
     return (res.count as number) > 0;
   }
 

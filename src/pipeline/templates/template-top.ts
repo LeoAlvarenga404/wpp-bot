@@ -17,7 +17,8 @@ export const topTemplate = (
   lines.push(`📦 ${raw.title}`);
   lines.push(`💰 *${formatBRL(price)}* (-${raw.discountPercent}%)`);
   const extras: string[] = [];
-  if (sd.deal.signals.installmentsNoInterest) extras.push(`${pickInstallments(price)} sem juros`);
+  if (sd.deal.signals.installmentsNoInterest)
+    extras.push(`${pickInstallments(price)} sem juros`);
   if (sd.deal.signals.freeShipping) extras.push('🚚 frete grátis');
   if (extras.length) lines.push(extras.join(' · '));
   lines.push('');
@@ -30,7 +31,12 @@ export const topTemplate = (
 
 function pickHistoryLine(sd: ScoredDeal): string | null {
   const hit = sd.reasons.find((r) =>
-    ['lowest_price_30d', 'lowest_price_14d', 'lowest_price_7d', 'below_median_30d'].includes(r.code),
+    [
+      'lowest_price_30d',
+      'lowest_price_14d',
+      'lowest_price_7d',
+      'below_median_30d',
+    ].includes(r.code),
   );
   return hit ? `📉 ${hit.message}` : null;
 }

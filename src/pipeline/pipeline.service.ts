@@ -37,7 +37,8 @@ export class PipelineService {
     private readonly dealScore: DealScoreService,
     private readonly targets: TargetsService,
     private readonly counters: CountersService,
-    @Inject(SEND_DEAL_QUEUE_TOKEN) private readonly sendQueue: Queue<SendDealJob>,
+    @Inject(SEND_DEAL_QUEUE_TOKEN)
+    private readonly sendQueue: Queue<SendDealJob>,
   ) {}
 
   async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
@@ -70,12 +71,19 @@ export class PipelineService {
   }
 
   private async scorePipeline(
-    source: { id: SourceId; enrichMany: (raws: RawDeal[]) => Promise<EnrichedDeal[]> },
+    source: {
+      id: SourceId;
+      enrichMany: (raws: RawDeal[]) => Promise<EnrichedDeal[]>;
+    },
     rawDeals: RawDeal[],
   ): Promise<ScoredDeal[]> {
-    const windowDays = Number(this.config.get<string>('DEDUP_WINDOW_DAYS', '7'));
+    const windowDays = Number(
+      this.config.get<string>('DEDUP_WINDOW_DAYS', '7'),
+    );
     const scoreMin = Number(this.config.get<string>('DEAL_SCORE_MIN', '75'));
-    const enrichTopN = Number(this.config.get<string>('DEAL_ENRICH_TOP_N', '10'));
+    const enrichTopN = Number(
+      this.config.get<string>('DEAL_ENRICH_TOP_N', '10'),
+    );
 
     const survivors: RawDeal[] = [];
     for (const raw of rawDeals) {
@@ -90,7 +98,9 @@ export class PipelineService {
     }
 
     if (survivors.length === 0) {
-      this.logger.log(`scorePipeline ${source.id} - raw=${rawDeals.length} survivors=0`);
+      this.logger.log(
+        `scorePipeline ${source.id} - raw=${rawDeals.length} survivors=0`,
+      );
       return [];
     }
 
@@ -193,18 +203,18 @@ export class PipelineService {
       s += Math.min(25, ratio * 100);
     }
     if (analytics.min30d != null && raw.priceCents <= analytics.min30d) s += 15;
-    else if (analytics.min14d != null && raw.priceCents <= analytics.min14d) s += 10;
-    else if (analytics.min7d != null && raw.priceCents <= analytics.min7d) s += 5;
+    else if (analytics.min14d != null && raw.priceCents <= analytics.min14d)
+      s += 10;
+    else if (analytics.min7d != null && raw.priceCents <= analytics.min7d)
+      s += 5;
     if (analytics.distinctDays < 7) s -= 25;
     return s;
   }
 
-  async runOnce(opts?: {
-    sourceId?: SourceId;
-    max?: number;
-  }) {
+  async runOnce(opts?: { sourceId?: SourceId; max?: number }) {
     const sourceId: SourceId = opts?.sourceId ?? 'ml';
-    const max = opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
+    const max =
+      opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
 
     const scored = await this.collectScored(sourceId);
     const result = await this.enqueueScored(scored, max);
@@ -223,28 +233,53 @@ export class PipelineService {
     perCategory?: number;
   }) {
     const DEFAULT_CATEGORIES = [
-      'MLB1648', 'MLB1000', 'MLB1051', 'MLB5726',
-      'MLB1276', 'MLB1246', 'MLB1144', 'MLB1430',
+      'MLB1648',
+      'MLB1000',
+      'MLB1051',
+      'MLB5726',
+      'MLB1276',
+      'MLB1246',
+      'MLB1144',
+      'MLB1430',
     ];
-    const categories = opts?.categories?.length ? opts.categories : DEFAULT_CATEGORIES;
+    const categories = opts?.categories?.length
+      ? opts.categories
+      : DEFAULT_CATEGORIES;
     const minDiscount =
-      opts?.minDiscount ?? Number(this.config.get<string>('ML_MIN_DISCOUNT', '25'));
+      opts?.minDiscount ??
+      Number(this.config.get<string>('ML_MIN_DISCOUNT', '25'));
     const perCategory = opts?.perCategory ?? 5;
 
-    const results: Record<string, { permalink: string; title: string; price: number; discountPercent: number }[]> = {};
+    const results: Record<
+      string,
+      {
+        permalink: string;
+        title: string;
+        price: number;
+        discountPercent: number;
+      }[]
+    > = {};
     const flatUrls: string[] = [];
     for (const cat of categories) {
-      const deals = await this.ml.getDealsFromHighlights({ category: cat, minDiscount, max: perCategory });
+      const deals = await this.ml.getDealsFromHighlights({
+        category: cat,
+        minDiscount,
+        max: perCategory,
+      });
       results[cat] = deals.map((d) => ({
-        permalink: d.permalink, title: d.title, price: d.price, discountPercent: d.discountPercent,
+        permalink: d.permalink,
+        title: d.title,
+        price: d.price,
+        discountPercent: d.discountPercent,
       }));
       for (const d of deals) flatUrls.push(d.permalink);
     }
     return {
-      minDiscount, perCategory, totalUrls: flatUrls.length,
+      minDiscount,
+      perCategory,
+      totalUrls: flatUrls.length,
       pasteIntoAffiliatePanel: flatUrls.join('\n'),
       byCategory: results,
     };
   }
-
 }

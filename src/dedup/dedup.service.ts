@@ -13,9 +13,7 @@ export class DedupService implements OnModuleInit {
   private readonly logger = new Logger(DedupService.name);
   private readonly jsonBackfillPath: string = path.resolve(DEFAULT_JSON_FILE);
 
-  constructor(
-    @Inject(DEDUP_REPO) private readonly repo: DedupRepo,
-  ) {}
+  constructor(@Inject(DEDUP_REPO) private readonly repo: DedupRepo) {}
 
   async onModuleInit(): Promise<void> {
     await this.maybeBackfillFromJson();
@@ -79,7 +77,7 @@ export class DedupService implements OnModuleInit {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
-    } catch (err) {
+    } catch {
       this.logger.warn(
         `Legacy ${this.jsonBackfillPath} is not valid JSON — skipping backfill`,
       );
@@ -110,7 +108,8 @@ export class DedupService implements OnModuleInit {
     const cutoff = new Date(Date.now() - 2 * DEFAULT_GC_WINDOW_DAYS * DAY_MS);
     try {
       const pruned = await this.repo.pruneOlderThan(cutoff);
-      if (pruned > 0) this.logger.log(`Dedup GC: pruned ${pruned} stale entries`);
+      if (pruned > 0)
+        this.logger.log(`Dedup GC: pruned ${pruned} stale entries`);
     } catch (err) {
       this.logger.error('Dedup GC failed', err as Error);
     }

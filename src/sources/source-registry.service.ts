@@ -1,11 +1,7 @@
 // src/sources/source-registry.service.ts
 
 import { Inject, Injectable } from '@nestjs/common';
-import {
-  DealSourcePort,
-  SOURCES_TOKEN,
-  SourceId,
-} from './source.port';
+import { DealSourcePort, SOURCES_TOKEN, SourceId } from './source.port';
 
 @Injectable()
 export class SourceRegistry {

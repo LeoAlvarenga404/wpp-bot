@@ -11,5 +11,7 @@ export interface DedupRepo {
   getPostedAt(catalogId: string): Promise<Date | null>;
   pruneOlderThan(cutoff: Date): Promise<number>;
   count(): Promise<number>;
-  importMany(entries: Array<{ catalogId: string; postedAt: Date }>): Promise<void>;
+  importMany(
+    entries: Array<{ catalogId: string; postedAt: Date }>,
+  ): Promise<void>;
 }

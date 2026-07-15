@@ -1,4 +1,3 @@
-import { DealItem } from '../../mercado-livre/types';
 import { CaptionTemplate } from './template-fire-types';
 
 export const fireTemplate: CaptionTemplate = (

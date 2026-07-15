@@ -73,7 +73,9 @@ export class FormatterService {
     return { caption: `${caption}\n\n${this.disclaimerLine()}`, imageUrl };
   }
 
-  async formatScored(scored: ScoredDeal): Promise<{ caption: string; imageUrl: string }> {
+  async formatScored(
+    scored: ScoredDeal,
+  ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
     const [link, hook] = await Promise.all([
@@ -83,9 +85,11 @@ export class FormatterService {
     const formatBRL = (n: number) => this.formatBRL(n);
 
     const tmpl =
-      scored.level === 'super' ? templatesByLevel.super :
-      scored.level === 'top'   ? templatesByLevel.top :
-      templatesByLevel.good;
+      scored.level === 'super'
+        ? templatesByLevel.super
+        : scored.level === 'top'
+          ? templatesByLevel.top
+          : templatesByLevel.good;
     // 'rejected' level never reaches dispatch; fall back to good template defensively.
 
     const caption = `${tmpl(scored, formatBRL, link, hook)}\n\n${this.disclaimerLine()}`;

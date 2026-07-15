@@ -67,8 +67,7 @@ export class SchedulerService {
     // side-loads the repo's .env into process.env, so a local
     // SCHEDULER_DISPATCH_ENABLED=false silently flipped this to collect-only
     // inside Jest.
-    const raw =
-      this.config.get<string>('SCHEDULER_DISPATCH_ENABLED') ?? 'true';
+    const raw = this.config.get<string>('SCHEDULER_DISPATCH_ENABLED') ?? 'true';
     return raw.toLowerCase() !== 'false';
   }
 
@@ -104,7 +103,9 @@ export class SchedulerService {
   private async tickLegacy(): Promise<void> {
     const sourceId = this.pickSourceId();
     if (!sourceId) {
-      this.logger.warn('Scheduler tick (legacy) skipped - no source registered');
+      this.logger.warn(
+        'Scheduler tick (legacy) skipped - no source registered',
+      );
       return;
     }
     const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));

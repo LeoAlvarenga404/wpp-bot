@@ -4,11 +4,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EnrichmentService } from '../../enrichment/enrichment.service';
 import { MercadoLivreService } from '../../mercado-livre/ml.service';
 import type { DealItem } from '../../mercado-livre/types';
-import {
-  DealSourcePort,
-  EnrichedDeal,
-  RawDeal,
-} from '../source.port';
+import { DealSourcePort, EnrichedDeal, RawDeal } from '../source.port';
 import { FeedRotatorService } from './feed-rotator.service';
 import { toEnrichedDeal, toRawDeal } from './mapping';
 

@@ -2,7 +2,10 @@
 
 jest.mock('@whiskeysockets/baileys', () => ({}));
 jest.mock('@hapi/boom', () => ({ Boom: class Boom {} }));
-jest.mock('@sentry/node', () => ({ captureException: jest.fn(), init: jest.fn() }));
+jest.mock('@sentry/node', () => ({
+  captureException: jest.fn(),
+  init: jest.fn(),
+}));
 jest.mock('../whatsapp/wa.service');
 
 import { ConfigService } from '@nestjs/config';
@@ -26,8 +29,18 @@ function makePipeline(): PipelineService {
     collectScored: jest.fn(async (): Promise<ScoredDeal[]> => []),
     collectScoredOne: jest.fn(async (): Promise<ScoredDeal[]> => []),
     collectAllScored: jest.fn(async (): Promise<ScoredDeal[]> => []),
-    enqueueScored: jest.fn(async () => ({ enqueued: 0, targets: 0, topScore: null })),
-    runOnce: jest.fn(async () => ({ enqueued: 0, targets: 0, scored: 0, topScore: null, sourceId: 'ml' })),
+    enqueueScored: jest.fn(async () => ({
+      enqueued: 0,
+      targets: 0,
+      topScore: null,
+    })),
+    runOnce: jest.fn(async () => ({
+      enqueued: 0,
+      targets: 0,
+      scored: 0,
+      topScore: null,
+      sourceId: 'ml',
+    })),
   } as unknown as PipelineService;
 }
 

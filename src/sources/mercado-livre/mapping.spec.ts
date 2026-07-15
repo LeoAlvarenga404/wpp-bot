@@ -19,7 +19,7 @@ describe('mapSellerTrust', () => {
     [null, 'unknown'],
     ['unexpected', 'unknown'],
   ])('maps %p to %p', (input, expected) => {
-    expect(mapSellerTrust(input as string | null)).toBe(expected);
+    expect(mapSellerTrust(input)).toBe(expected);
   });
 });
 
@@ -35,7 +35,7 @@ describe('mapVolumeTier', () => {
     [500, 'high'],
     [10000, 'high'],
   ])('maps sold=%p to %p', (sold, expected) => {
-    expect(mapVolumeTier(sold as number | null)).toBe(expected);
+    expect(mapVolumeTier(sold)).toBe(expected);
   });
 });
 
@@ -70,7 +70,7 @@ describe('toNormalizedSeller', () => {
       displayName: 'BIG STORE',
       sellerTrust: 'high',
       isVerifiedStore: true,
-      ratingAverage: 0.9,    // 4.5 / 5
+      ratingAverage: 0.9, // 4.5 / 5
       fetchedAt: '2026-05-14T00:00:00.000Z',
     });
   });

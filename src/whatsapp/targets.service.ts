@@ -105,7 +105,7 @@ export class TargetsService implements OnModuleInit {
     if (!Array.isArray(parsed)) return;
 
     const targets: WaTarget[] = [];
-    for (const e of parsed as any[]) {
+    for (const e of parsed) {
       if (!e || typeof e.jid !== 'string') continue;
       targets.push({
         jid: e.jid,

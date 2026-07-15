@@ -85,8 +85,12 @@ describe('DealScoreService', () => {
     const svc = makeService({ DEAL_SCORE_MIN: '0' });
     const analytics = analyze({ observations: historyClassicTrap, now });
     const deal = withRaw(enrichedOfficialStore, { priceCents: 12000 });
-    const r = svc.computeWithObservations(deal, analytics, historyClassicTrap, { now });
-    expect(r.penalties.some((p) => p.code === 'price_raise_before_discount')).toBe(true);
+    const r = svc.computeWithObservations(deal, analytics, historyClassicTrap, {
+      now,
+    });
+    expect(
+      r.penalties.some((p) => p.code === 'price_raise_before_discount'),
+    ).toBe(true);
   });
 
   it('reasons are sorted by weight desc and contain only positives', () => {

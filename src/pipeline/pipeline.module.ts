@@ -14,8 +14,15 @@ import { PipelineService } from './pipeline.service';
 
 @Module({
   imports: [
-    MercadoLivreModule, WhatsappModule, AffiliateModule, DedupModule,
-    CurationModule, HeadlineModule, AuthModule, DealScoreModule, MetricsModule,
+    MercadoLivreModule,
+    WhatsappModule,
+    AffiliateModule,
+    DedupModule,
+    CurationModule,
+    HeadlineModule,
+    AuthModule,
+    DealScoreModule,
+    MetricsModule,
   ],
   controllers: [PipelineController],
   providers: [PipelineService, FormatterService],

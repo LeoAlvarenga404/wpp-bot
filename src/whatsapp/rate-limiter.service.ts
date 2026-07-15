@@ -110,8 +110,16 @@ export class RateLimiterService implements OnModuleInit {
     this.state.hour[hk] = (this.state.hour[hk] ?? 0) + 1;
     this.state.day[dk] = (this.state.day[dk] ?? 0) + 1;
     try {
-      await this.repo.upsert(`${HOUR_PREFIX}${hk}`, BUCKET_HOUR, this.state.hour[hk]);
-      await this.repo.upsert(`${DAY_PREFIX}${dk}`, BUCKET_DAY, this.state.day[dk]);
+      await this.repo.upsert(
+        `${HOUR_PREFIX}${hk}`,
+        BUCKET_HOUR,
+        this.state.hour[hk],
+      );
+      await this.repo.upsert(
+        `${DAY_PREFIX}${dk}`,
+        BUCKET_DAY,
+        this.state.day[dk],
+      );
     } catch (err) {
       this.logger.error('recordSend upsert failed', err as Error);
     }
@@ -170,7 +178,9 @@ export class RateLimiterService implements OnModuleInit {
       try {
         await this.repo.deleteMany(stale);
       } catch (err) {
-        this.logger.warn(`rate-limiter GC delete failed: ${(err as Error).message}`);
+        this.logger.warn(
+          `rate-limiter GC delete failed: ${(err as Error).message}`,
+        );
       }
     }
   }

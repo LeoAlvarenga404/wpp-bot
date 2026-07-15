@@ -1,4 +1,3 @@
-
 import { of, throwError } from 'rxjs';
 import { EnrichmentService } from './enrichment.service';
 import { DealItem } from '../mercado-livre/types';
@@ -35,7 +34,9 @@ const fakeCache = (() => {
   const map = new Map<number, any>();
   return {
     get: (id: number) => map.get(id) ?? null,
-    set: async (info: any) => { map.set(info.sellerId, info); },
+    set: async (info: any) => {
+      map.set(info.sellerId, info);
+    },
     _map: map,
   };
 })();
@@ -58,7 +59,14 @@ describe('EnrichmentService', () => {
       fetchedAt: new Date().toISOString(),
     });
     const http = fakeHttp({
-      '/items/MLBI1': of({ data: { id: 'MLBI1', sold_quantity: 10, condition: 'new', installments: { rate: 0 } } }),
+      '/items/MLBI1': of({
+        data: {
+          id: 'MLBI1',
+          sold_quantity: 10,
+          condition: 'new',
+          installments: { rate: 0 },
+        },
+      }),
     });
     const svc = new EnrichmentService(http, fakeAuth, fakeCache as any);
     const out = await svc.enrich(dealA);
@@ -68,13 +76,26 @@ describe('EnrichmentService', () => {
 
   it('fetches /users/{id} on cache miss', async () => {
     const http = fakeHttp({
-      '/users/7': of({ data: {
-        id: 7,
-        nickname: 'SHOP',
-        seller_reputation: { level_id: '5_green', power_seller_status: 'platinum', metrics: { rating: 4.7 } },
-        eshop: { eshop_id: 9001 },
-      } }),
-      '/items/MLBI1': of({ data: { id: 'MLBI1', sold_quantity: 100, condition: 'new', installments: { rate: 0 } } }),
+      '/users/7': of({
+        data: {
+          id: 7,
+          nickname: 'SHOP',
+          seller_reputation: {
+            level_id: '5_green',
+            power_seller_status: 'platinum',
+            metrics: { rating: 4.7 },
+          },
+          eshop: { eshop_id: 9001 },
+        },
+      }),
+      '/items/MLBI1': of({
+        data: {
+          id: 'MLBI1',
+          sold_quantity: 100,
+          condition: 'new',
+          installments: { rate: 0 },
+        },
+      }),
     });
     const svc = new EnrichmentService(http, fakeAuth, fakeCache as any);
     const out = await svc.enrich(dealA);
@@ -87,7 +108,14 @@ describe('EnrichmentService', () => {
     const notFound = throwError(() => ({ response: { status: 404 } }));
     const http = fakeHttp({
       '/users/7': notFound,
-      '/items/MLBI1': of({ data: { id: 'MLBI1', sold_quantity: 5, condition: 'new', installments: null } }),
+      '/items/MLBI1': of({
+        data: {
+          id: 'MLBI1',
+          sold_quantity: 5,
+          condition: 'new',
+          installments: null,
+        },
+      }),
     });
     const svc = new EnrichmentService(http, fakeAuth, fakeCache as any);
     const out = await svc.enrich(dealA);
@@ -107,7 +135,13 @@ describe('EnrichmentService', () => {
 
   it('enrichMany processes deals in batches', async () => {
     const http = fakeHttp({
-      '/users/': of({ data: { id: 7, nickname: 'X', seller_reputation: { level_id: '4_light_green' } } }),
+      '/users/': of({
+        data: {
+          id: 7,
+          nickname: 'X',
+          seller_reputation: { level_id: '4_light_green' },
+        },
+      }),
       '/items/': of({ data: { sold_quantity: 1, condition: 'new' } }),
     });
     const svc = new EnrichmentService(http, fakeAuth, fakeCache as any);

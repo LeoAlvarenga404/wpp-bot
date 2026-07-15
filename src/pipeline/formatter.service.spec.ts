@@ -170,8 +170,16 @@ function makeScored(level: ScoredDeal['level']): ScoredDeal {
       },
       extras: {},
     },
-    score: 92, rawScore: 92, level,
-    reasons: [{ code: 'lowest_price_30d', weight: 15, message: 'Menor preço dos últimos 30 dias' }],
+    score: 92,
+    rawScore: 92,
+    level,
+    reasons: [
+      {
+        code: 'lowest_price_30d',
+        weight: 15,
+        message: 'Menor preço dos últimos 30 dias',
+      },
+    ],
     penalties: [],
     factors: { lowest_price_30d: 15 },
   };

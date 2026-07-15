@@ -18,11 +18,15 @@ export class SellerCacheService implements OnModuleInit {
   private readonly ttlMs: number;
 
   constructor(private readonly config: ConfigService) {
-    const hours = Number(this.config.get<string>('SELLER_CACHE_TTL_HOURS', '24'));
+    const hours = Number(
+      this.config.get<string>('SELLER_CACHE_TTL_HOURS', '24'),
+    );
     this.ttlMs = hours * 60 * 60 * 1000;
     this.filePath = path.resolve(
-      this.config.get<string>('SELLER_CACHE_FILE', './data/seller-cache.json') ??
+      this.config.get<string>(
+        'SELLER_CACHE_FILE',
         './data/seller-cache.json',
+      ) ?? './data/seller-cache.json',
     );
   }
 

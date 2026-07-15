@@ -68,7 +68,10 @@ export class DealScoreService {
       priceStability: num('DEAL_SCORE_W_PRICE_STABILITY', 5),
       priceRaisePenalty: num('DEAL_SCORE_W_PRICE_RAISE_PENALTY', 30),
       usedPenalty: num('DEAL_SCORE_W_USED_PENALTY', 15),
-      discountFromOriginalOnly: num('DEAL_SCORE_W_DISCOUNT_FROM_ORIGINAL_ONLY', 10),
+      discountFromOriginalOnly: num(
+        'DEAL_SCORE_W_DISCOUNT_FROM_ORIGINAL_ONLY',
+        10,
+      ),
       aboveMedianPenalty: num('DEAL_SCORE_W_ABOVE_MEDIAN_PENALTY', 10),
       unknownSeller: num('DEAL_SCORE_W_UNKNOWN_SELLER', 5),
       insufficientHistoryPenalty: num(
@@ -95,7 +98,7 @@ export class DealScoreService {
   compute(
     deal: EnrichedDeal,
     analytics: PriceAnalytics,
-    opts?: { now?: Date },
+    _opts?: { now?: Date },
   ): ScoredDeal {
     const priceCents = deal.raw.priceCents;
     const factors: Record<string, number> = {};
@@ -144,9 +147,17 @@ export class DealScoreService {
 
     // 3. lowest_price_*
     if (analytics.min30d != null && priceCents <= analytics.min30d) {
-      add('lowest_price_30d', this.w.lowest30d, 'Menor preço dos últimos 30 dias');
+      add(
+        'lowest_price_30d',
+        this.w.lowest30d,
+        'Menor preço dos últimos 30 dias',
+      );
     } else if (analytics.min14d != null && priceCents <= analytics.min14d) {
-      add('lowest_price_14d', this.w.lowest14d, 'Menor preço dos últimos 14 dias');
+      add(
+        'lowest_price_14d',
+        this.w.lowest14d,
+        'Menor preço dos últimos 14 dias',
+      );
     } else if (analytics.min7d != null && priceCents <= analytics.min7d) {
       add('lowest_price_7d', this.w.lowest7d, 'Menor preço dos últimos 7 dias');
     }
@@ -166,7 +177,8 @@ export class DealScoreService {
       };
       const w = map[deal.seller.sellerTrust];
       if (typeof w === 'number' && w !== 0) {
-        const label = w > 0 ? `Vendedor com boa reputação` : `Vendedor com reputação baixa`;
+        const label =
+          w > 0 ? `Vendedor com boa reputação` : `Vendedor com reputação baixa`;
         add('seller_reputation', w, label);
       }
     } else {
@@ -180,7 +192,11 @@ export class DealScoreService {
 
     // 7. installments_no_interest
     if (deal.signals.installmentsNoInterest) {
-      add('installments_no_interest', this.w.installmentsNoInterest, 'Parcelas sem juros');
+      add(
+        'installments_no_interest',
+        this.w.installmentsNoInterest,
+        'Parcelas sem juros',
+      );
     }
 
     // 8. high_sold_quantity
@@ -193,9 +209,11 @@ export class DealScoreService {
     const soldW = tierW[deal.signals.volumeTier];
     if (soldW > 0) {
       const label =
-        deal.signals.volumeTier === 'high' ? 'Muitas vendas' :
-        deal.signals.volumeTier === 'mid'  ? 'Boa quantidade de vendas' :
-        'Algumas vendas';
+        deal.signals.volumeTier === 'high'
+          ? 'Muitas vendas'
+          : deal.signals.volumeTier === 'mid'
+            ? 'Boa quantidade de vendas'
+            : 'Algumas vendas';
       add('high_sold_quantity', soldW, label);
     }
 
@@ -203,7 +221,9 @@ export class DealScoreService {
     if (analytics.median30d != null) {
       if (
         analytics.median14d != null &&
-        Math.abs(analytics.median30d - analytics.median14d) / analytics.median30d < 0.05
+        Math.abs(analytics.median30d - analytics.median14d) /
+          analytics.median30d <
+          0.05
       ) {
         add('price_stability', this.w.priceStability, 'Preço base estável');
       }
@@ -229,7 +249,9 @@ export class DealScoreService {
 
     // 13. discount_from_original_only
     if (analytics.distinctDays === 0 && (factors.discount_percent ?? 0) > 0) {
-      const otherPositives = reasons.filter((r) => r.code !== 'discount_percent').length;
+      const otherPositives = reasons.filter(
+        (r) => r.code !== 'discount_percent',
+      ).length;
       if (otherPositives === 0) {
         add(
           'discount_from_original_only',
@@ -284,7 +306,10 @@ export class DealScoreService {
     };
 
     const penalties = [...base.penalties, penalty];
-    const factors = { ...base.factors, price_raise_before_discount: penalty.weight };
+    const factors = {
+      ...base.factors,
+      price_raise_before_discount: penalty.weight,
+    };
     const rawScore = Object.values(factors).reduce((a, b) => a + b, 0);
     const score = clamp(rawScore, 0, 100);
     const insufficient = analytics.distinctDays < this.t.minHistoryDays;

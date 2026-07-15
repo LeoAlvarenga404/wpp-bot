@@ -1,10 +1,6 @@
 import type { DealItem } from '../../mercado-livre/types';
 import type { ItemDetails, SellerInfo } from '../../enrichment/types';
-import type {
-  EnrichedDeal,
-  NormalizedSeller,
-  RawDeal,
-} from '../source.port';
+import type { EnrichedDeal, NormalizedSeller, RawDeal } from '../source.port';
 
 export function mapSellerTrust(
   reputationLevel: string | null,

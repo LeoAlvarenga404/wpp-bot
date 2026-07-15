@@ -36,7 +36,12 @@ export const imperdivelTemplate = (
 
 function pickHistoryLine(sd: ScoredDeal): string | null {
   const hit = sd.reasons.find((r) =>
-    ['lowest_price_30d', 'lowest_price_14d', 'lowest_price_7d', 'below_median_30d'].includes(r.code),
+    [
+      'lowest_price_30d',
+      'lowest_price_14d',
+      'lowest_price_7d',
+      'below_median_30d',
+    ].includes(r.code),
   );
   return hit ? `📉 ${hit.message}` : null;
 }
@@ -47,11 +52,15 @@ function pickSellerLine(sd: ScoredDeal): string | null {
   const parts: string[] = [];
   if (sd.deal.signals.isVerifiedStore) parts.push('Loja oficial');
   if (seller.sellerTrust === 'high') parts.push('MercadoLíder');
-  if (typeof seller.ratingAverage === 'number') parts.push(`${seller.ratingAverage.toFixed(1)}★`);
+  if (typeof seller.ratingAverage === 'number')
+    parts.push(`${seller.ratingAverage.toFixed(1)}★`);
   return parts.length > 0 ? `✅ ${parts.join(' · ')}` : null;
 }
 
-function pickInstallments(price: number, formatBRL: (n: number) => string): string {
+function pickInstallments(
+  price: number,
+  formatBRL: (n: number) => string,
+): string {
   if (price >= 600) return `12x ${formatBRL(price / 12)}`;
   if (price >= 200) return `10x ${formatBRL(price / 10)}`;
   return `até 6x`;
