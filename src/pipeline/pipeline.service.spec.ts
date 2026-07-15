@@ -87,6 +87,8 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
   const curation = {
     record: jest.fn(async () => undefined),
     isFakeDiscount: jest.fn(() => false),
+    getLowestPriceBadge: jest.fn(() => null),
+    historyDays: jest.fn(() => 0),
     getAnalytics: jest.fn(() => ({
       median7d: null,
       median14d: null,
@@ -304,5 +306,59 @@ describe('PipelineService.enqueueScored', () => {
     await expect(
       d.pipeline.enqueueScored([scoredFixture()], 3),
     ).rejects.toThrow(/No active targets/);
+  });
+
+  it('fills trustBadge when curation has a badge', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+    ]);
+    d.curation.getLowestPriceBadge.mockReturnValue('📉 Menor preço em 30 dias');
+    d.curation.historyDays.mockReturnValue(42);
+
+    await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+    expect(d.curation.getLowestPriceBadge).toHaveBeenCalledWith(
+      'ml:MLB1',
+      10000,
+    );
+    expect(d.sendQueue.add).toHaveBeenCalledWith(
+      'send-deal',
+      expect.objectContaining({
+        trustBadge: { label: '📉 Menor preço em 30 dias', monitoredDays: 42 },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('omits trustBadge when curation returns no badge', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+    ]);
+
+    await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+    const payload = d.sendQueue.add.mock.calls[0][1];
+    expect(payload.trustBadge).toBeUndefined();
+  });
+
+  it('omits trustBadge when TRUST_BADGE_ENABLED=false', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+    ]);
+    d.curation.getLowestPriceBadge.mockReturnValue('📉 Menor preço em 30 dias');
+    d.curation.historyDays.mockReturnValue(42);
+    (d.pipeline as any).config = {
+      get: (k: string, def?: string) =>
+        k === 'TRUST_BADGE_ENABLED' ? 'false' : def,
+    };
+
+    await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+    const payload = d.sendQueue.add.mock.calls[0][1];
+    expect(payload.trustBadge).toBeUndefined();
+    expect(d.curation.getLowestPriceBadge).not.toHaveBeenCalled();
   });
 });

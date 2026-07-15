@@ -9,7 +9,7 @@ import { DealScoreService } from '../deal-score/deal-score.service';
 import type { ScoredDeal } from '../deal-score/types';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
 import { SEND_DEAL_QUEUE_TOKEN } from '../queue/queue.module';
-import type { SendDealJob } from '../queue/queue.types';
+import type { SendDealJob, TrustBadge } from '../queue/queue.types';
 import {
   EnrichedDeal,
   keyToString,
@@ -169,11 +169,29 @@ export class PipelineService {
       );
     }
 
+    const trustBadgeEnabled =
+      this.config.get<string>('TRUST_BADGE_ENABLED', 'true') !== 'false';
+
     let enqueued = 0;
     let topScore: number | null = null;
     for (const { scored: sd, variant } of selected) {
       if (topScore === null) topScore = sd.score;
       const catalogKey = keyToString(sd.deal.key);
+
+      let trustBadge: TrustBadge | undefined;
+      if (trustBadgeEnabled) {
+        const label = this.curation.getLowestPriceBadge(
+          catalogKey,
+          sd.deal.raw.priceCents,
+        );
+        if (label) {
+          trustBadge = {
+            label,
+            monitoredDays: this.curation.historyDays(catalogKey),
+          };
+        }
+      }
+
       let dealEnqueued = false;
       for (const target of activeTargets) {
         // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
@@ -188,6 +206,7 @@ export class PipelineService {
               catalogKey,
               scored: sd,
               variant,
+              trustBadge,
             },
             { jobId },
           );
