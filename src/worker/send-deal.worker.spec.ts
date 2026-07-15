@@ -74,6 +74,7 @@ describe('SendDealWorker.process', () => {
     expect(d.formatter.formatScored).toHaveBeenCalledWith(
       expect.anything(),
       'B',
+      undefined,
     );
     expect(d.prisma.sentMessage.create).toHaveBeenCalledWith({
       data: {
@@ -96,6 +97,7 @@ describe('SendDealWorker.process', () => {
     expect(d.formatter.formatScored).toHaveBeenCalledWith(
       expect.anything(),
       'A',
+      undefined,
     );
   });
 
@@ -106,6 +108,24 @@ describe('SendDealWorker.process', () => {
     await (worker as any).process(makeJob(undefined));
 
     expect(d.registry.get).toHaveBeenCalledWith('wa');
+  });
+
+  it('passes trustBadge through to the formatter', async () => {
+    const d = makeDeps();
+    const worker = makeWorker(d);
+    const job = makeJob('wa');
+    job.data.trustBadge = {
+      label: '📉 Menor preço em 30 dias',
+      monitoredDays: 42,
+    };
+
+    await (worker as any).process(job);
+
+    expect(d.formatter.formatScored).toHaveBeenCalledWith(
+      expect.anything(),
+      'B',
+      { label: '📉 Menor preço em 30 dias', monitoredDays: 42 },
+    );
   });
 
   it('does not fail the job when the audit insert fails', async () => {

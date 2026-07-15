@@ -89,6 +89,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     const { caption, imageUrl } = await this.formatter.formatScored(
       scored,
       variant,
+      job.data.trustBadge,
     );
     await publisher.publish({ caption, imageUrl }, targetJid);
 
