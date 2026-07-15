@@ -53,7 +53,7 @@ export class CurationGateService implements OnModuleInit {
     this.scoreTop = num('DEAL_SCORE_TOP', 90);
     this.minHistoryDays = num('CURATION_MIN_HISTORY_DAYS', 7);
     this.minConfidence = num('JUDGE_MIN_CONFIDENCE', 0.6);
-    this.maxJudgeCallsPerTick = num('JUDGE_MAX_CALLS_PER_TICK', 10);
+    this.maxJudgeCallsPerTick = num('JUDGE_MAX_CALLS_PER_TICK', 20);
     this.copyAbEnabled =
       (this.config.get<string>('COPY_AB_ENABLED') ?? 'true') !== 'false';
   }

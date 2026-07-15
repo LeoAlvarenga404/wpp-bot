@@ -279,6 +279,40 @@ describe('PipelineService.enqueueScored', () => {
     );
   });
 
+  it('applies per-channel caps: telegram receives more deals than wa', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      { jid: '-100555', name: 'tg', active: true, channel: 'telegram' },
+    ]);
+    (d.pipeline as any).config = {
+      get: (k: string, def?: string) => {
+        if (k === 'MAX_DEALS_PER_RUN_WA') return '1';
+        if (k === 'MAX_DEALS_PER_RUN_TELEGRAM') return '3';
+        if (k === 'WA_DIGEST_SIZE') return '1';
+        return def;
+      },
+    };
+    const scored = [90, 85, 80].map((s, i) => ({
+      ...scoredFixture(),
+      score: s,
+      deal: enrichedFor(rawFor(`MLB${i + 1}`)),
+    }));
+
+    const result = await d.pipeline.enqueueScored(scored);
+
+    const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+    const waJobs = calls.filter(([, data]) => data.channel === 'wa');
+    const tgJobs = calls.filter(([, data]) => data.channel === 'telegram');
+    expect(waJobs).toHaveLength(1);
+    expect(tgJobs).toHaveLength(3);
+    expect(result.enqueued).toBe(4);
+    expect(d.gate.selectForDispatch).toHaveBeenCalledWith(
+      expect.anything(),
+      3, // max(waCap=1, tgCap=3)
+    );
+  });
+
   it('falls back to WA_TARGET_JID as a wa-channel target', async () => {
     const d = makeDeps({ rawDeals: [] });
     d.targets.getActiveTargets.mockResolvedValue([]);

@@ -128,23 +128,32 @@ export class PipelineService {
   }
 
   /**
-   * Enqueue the top `max` scored deals for every active target. One job per
-   * (deal × target) so a multi-broadcast publish doesn't block on the
-   * slowest send. The BullMQ worker (`SendDealWorker`) handles retries,
-   * dedup marking, and rate-limit backoff.
+   * Enqueue approved deals per active target, honoring a per-channel cap:
+   * MAX_DEALS_PER_RUN_WA for 'wa' targets, MAX_DEALS_PER_RUN_TELEGRAM for
+   * 'telegram' targets. `overrideMax` (manual /pipeline/run) caps both.
+   * The gate returns deals sorted by score desc, so slicing by index keeps
+   * the best deals on every channel.
    *
    * Falls back to `WA_TARGET_JID` when the TargetsService registry is empty
    * so single-target installs keep working without DB seeding.
    */
   async enqueueScored(
     scored: ScoredDeal[],
-    max: number,
+    overrideMax?: number,
   ): Promise<{
     enqueued: number;
     targets: number;
     topScore: number | null;
   }> {
-    const selected = await this.gate.selectForDispatch(scored, max);
+    const num = (k: string, def: number) =>
+      Number(this.config.get<string>(k, String(def)));
+    const waCap = overrideMax ?? num('MAX_DEALS_PER_RUN_WA', 4);
+    const tgCap = overrideMax ?? num('MAX_DEALS_PER_RUN_TELEGRAM', 10);
+
+    const selected = await this.gate.selectForDispatch(
+      scored,
+      Math.max(waCap, tgCap),
+    );
     if (selected.length === 0) {
       return { enqueued: 0, targets: 0, topScore: null };
     }
@@ -170,12 +179,14 @@ export class PipelineService {
     }
 
     let enqueued = 0;
-    let topScore: number | null = null;
-    for (const { scored: sd, variant } of selected) {
-      if (topScore === null) topScore = sd.score;
+    const topScore = selected[0]?.scored.score ?? null;
+    for (let i = 0; i < selected.length; i++) {
+      const { scored: sd, variant } = selected[i];
       const catalogKey = keyToString(sd.deal.key);
       let dealEnqueued = false;
       for (const target of activeTargets) {
+        const cap = target.channel === 'telegram' ? tgCap : waCap;
+        if (i >= cap) continue;
         // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
         // coalesce while waiting in the queue.
         const jobId = `${catalogKey}:${target.jid}`;
@@ -228,11 +239,9 @@ export class PipelineService {
 
   async runOnce(opts?: { sourceId?: SourceId; max?: number }) {
     const sourceId: SourceId = opts?.sourceId ?? 'ml';
-    const max =
-      opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
 
     const scored = await this.collectScored(sourceId);
-    const result = await this.enqueueScored(scored, max);
+    const result = await this.enqueueScored(scored, opts?.max);
     return {
       enqueued: result.enqueued,
       targets: result.targets,
