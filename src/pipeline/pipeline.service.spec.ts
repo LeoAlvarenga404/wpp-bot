@@ -98,6 +98,23 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
     })),
     getObservations: jest.fn(() => []),
   } as any;
+  // Gate fake mirrors real behavior: dedup screen + top-max pass-through with
+  // variant 'A'. Judge/decision recording are exercised in the gate's own spec.
+  const gate = {
+    screenRaw: jest.fn(async (raw: RawDeal) => {
+      const keyStr = `${raw.key.source}:${raw.key.externalId}`;
+      return !(await dedup.wasRecentlyPosted(keyStr));
+    }),
+    recordPrescoreCut: jest.fn(async () => undefined),
+    recordScoreReject: jest.fn(async () => undefined),
+    selectForDispatch: jest.fn(async (scored: ScoredDeal[], max: number) =>
+      [...scored]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, max)
+        .map((sd) => ({ scored: sd, variant: 'A' as const })),
+    ),
+    recordPosted: jest.fn(async () => undefined),
+  } as any;
   const dealScore = {
     computeWithObservations: jest.fn(
       (e: EnrichedDeal): ScoredDeal => ({
@@ -136,15 +153,15 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
       wa,
       formatter,
       config,
-      dedup,
       curation,
+      gate,
       registry,
       dealScore,
       targets,
-      counters,
       sendQueue,
     ),
     dedup,
+    gate,
     curation,
     dealScore,
     formatter,
@@ -247,9 +264,14 @@ describe('PipelineService.enqueueScored', () => {
     expect(result.targets).toBe(2);
     expect(d.sendQueue.add).toHaveBeenCalledWith(
       'send-deal',
-      expect.objectContaining({ targetJid: '123@g.us', channel: 'wa' }),
+      expect.objectContaining({
+        targetJid: '123@g.us',
+        channel: 'wa',
+        variant: 'A',
+      }),
       { jobId: expect.stringContaining('123@g.us') },
     );
+    expect(d.gate.recordPosted).toHaveBeenCalledTimes(1);
     expect(d.sendQueue.add).toHaveBeenCalledWith(
       'send-deal',
       expect.objectContaining({ targetJid: '-100555', channel: 'telegram' }),

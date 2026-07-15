@@ -3,12 +3,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
+import { CurationGateService } from '../curation/curation-gate.service';
 import { CurationService } from '../curation/curation.service';
 import { DealScoreService } from '../deal-score/deal-score.service';
 import type { ScoredDeal } from '../deal-score/types';
-import { DedupService } from '../dedup/dedup.service';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
-import { CountersService } from '../metrics/counters.service';
 import { SEND_DEAL_QUEUE_TOKEN } from '../queue/queue.module';
 import type { SendDealJob } from '../queue/queue.types';
 import {
@@ -31,12 +30,11 @@ export class PipelineService {
     private readonly wa: WhatsappService,
     private readonly formatter: FormatterService,
     private readonly config: ConfigService,
-    private readonly dedup: DedupService,
     private readonly curation: CurationService,
+    private readonly gate: CurationGateService,
     private readonly registry: SourceRegistry,
     private readonly dealScore: DealScoreService,
     private readonly targets: TargetsService,
-    private readonly counters: CountersService,
     @Inject(SEND_DEAL_QUEUE_TOKEN)
     private readonly sendQueue: Queue<SendDealJob>,
   ) {}
@@ -77,9 +75,6 @@ export class PipelineService {
     },
     rawDeals: RawDeal[],
   ): Promise<ScoredDeal[]> {
-    const windowDays = Number(
-      this.config.get<string>('DEDUP_WINDOW_DAYS', '7'),
-    );
     const scoreMin = Number(this.config.get<string>('DEAL_SCORE_MIN', '75'));
     const enrichTopN = Number(
       this.config.get<string>('DEAL_ENRICH_TOP_N', '10'),
@@ -89,11 +84,7 @@ export class PipelineService {
     for (const raw of rawDeals) {
       const keyStr = keyToString(raw.key);
       await this.curation.record(keyStr, raw.priceCents);
-      if (await this.dedup.wasRecentlyPosted(keyStr, windowDays)) {
-        this.counters.dedupSkip.inc();
-        continue;
-      }
-      if (this.curation.isFakeDiscount(keyStr, raw.priceCents)) continue;
+      if (!(await this.gate.screenRaw(raw))) continue;
       survivors.push(raw);
     }
 
@@ -104,11 +95,13 @@ export class PipelineService {
       return [];
     }
 
-    const preScored = survivors
+    const preScoredAll = survivors
       .map((r) => ({ raw: r, pre: this.prescore(r) }))
-      .sort((a, b) => b.pre - a.pre)
-      .slice(0, enrichTopN)
-      .map((x) => x.raw);
+      .sort((a, b) => b.pre - a.pre);
+    const preScored = preScoredAll.slice(0, enrichTopN).map((x) => x.raw);
+    await this.gate.recordPrescoreCut(
+      preScoredAll.slice(enrichTopN).map((x) => x.raw),
+    );
 
     const enriched = await source.enrichMany(preScored);
 
@@ -121,6 +114,10 @@ export class PipelineService {
 
     const passing = scored.filter((s) => s.score >= scoreMin);
     passing.sort((a, b) => b.score - a.score);
+
+    for (const s of scored) {
+      if (s.score < scoreMin) await this.gate.recordScoreReject(s);
+    }
 
     this.logger.log(
       `scorePipeline ${source.id} - raw=${rawDeals.length} survivors=${survivors.length} ` +
@@ -147,8 +144,8 @@ export class PipelineService {
     targets: number;
     topScore: number | null;
   }> {
-    const sorted = [...scored].sort((a, b) => b.score - a.score).slice(0, max);
-    if (sorted.length === 0) {
+    const selected = await this.gate.selectForDispatch(scored, max);
+    if (selected.length === 0) {
       return { enqueued: 0, targets: 0, topScore: null };
     }
 
@@ -174,9 +171,10 @@ export class PipelineService {
 
     let enqueued = 0;
     let topScore: number | null = null;
-    for (const sd of sorted) {
+    for (const { scored: sd, variant } of selected) {
       if (topScore === null) topScore = sd.score;
       const catalogKey = keyToString(sd.deal.key);
+      let dealEnqueued = false;
       for (const target of activeTargets) {
         // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
         // coalesce while waiting in the queue.
@@ -189,20 +187,23 @@ export class PipelineService {
               channel: target.channel,
               catalogKey,
               scored: sd,
+              variant,
             },
             { jobId },
           );
           enqueued++;
+          dealEnqueued = true;
         } catch (err) {
           this.logger.error(
             `enqueue ${jobId} failed: ${(err as Error).message}`,
           );
         }
       }
+      if (dealEnqueued) await this.gate.recordPosted(sd, variant);
     }
 
     this.logger.log(
-      `enqueueScored: deals=${sorted.length} targets=${activeTargets.length} enqueued=${enqueued}`,
+      `enqueueScored: deals=${selected.length} targets=${activeTargets.length} enqueued=${enqueued}`,
     );
     return { enqueued, targets: activeTargets.length, topScore };
   }

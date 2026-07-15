@@ -10,5 +10,7 @@ export interface SendDealJob {
   /** Catalog key string (source:externalId) — also doubles as the BullMQ
    *  job id so duplicate enqueues for the same (deal, target) coalesce. */
   catalogKey: string;
+  /** Copy A/B variant. Optional: jobs enqueued pre-Fase-2 default to 'A'. */
+  variant?: 'A' | 'B';
   scored: ScoredDeal;
 }
