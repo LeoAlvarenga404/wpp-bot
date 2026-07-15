@@ -70,7 +70,7 @@ export class FormatterService {
 
     const imageUrl = this.toHiResImage(item.thumbnail || '');
 
-    return { caption, imageUrl };
+    return { caption: `${caption}\n\n${this.disclaimerLine()}`, imageUrl };
   }
 
   async formatScored(scored: ScoredDeal): Promise<{ caption: string; imageUrl: string }> {
@@ -88,9 +88,23 @@ export class FormatterService {
       templatesByLevel.good;
     // 'rejected' level never reaches dispatch; fall back to good template defensively.
 
-    const caption = tmpl(scored, formatBRL, link, hook);
+    const caption = `${tmpl(scored, formatBRL, link, hook)}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
+  }
+
+  /**
+   * Mandatory on every caption (affiliate compliance): discloses the
+   * affiliate link and timestamps the price so a later price change doesn't
+   * read as a fake promo.
+   */
+  private disclaimerLine(now = new Date()): string {
+    const hhmm = now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: process.env.TZ ?? 'America/Sao_Paulo',
+    });
+    return `_🔗 Link de afiliado. Preço visto às ${hhmm} — sujeito a alteração._`;
   }
 
   private toHiResImage(original: string): string {

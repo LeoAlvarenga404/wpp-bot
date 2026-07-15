@@ -51,14 +51,18 @@ describe('FormatterService', () => {
     expect(imageUrl).toContain('https://');
   });
 
-  it('omits affiliate disclaimer line', async () => {
+  it('appends affiliate disclaimer with price timestamp', async () => {
     const service = new FormatterService(makeAffiliate(), makeHeadline());
     const deal = makeDeal();
 
     const { caption } = await service.formatItem(deal);
 
-    expect(caption).not.toContain('Link de afiliado');
-    expect(caption).not.toMatch(/_.*afiliado.*_/i);
+    expect(caption).toContain('Link de afiliado');
+    expect(caption).toMatch(/Preço visto às \d{2}:\d{2}/);
+    // disclaimer is the last line, italicized
+    const lastLine = caption.trimEnd().split('\n').pop() ?? '';
+    expect(lastLine.startsWith('_')).toBe(true);
+    expect(lastLine.endsWith('_')).toBe(true);
   });
 
   it('transforms thumbnails to hi-res (-O.jpg -> -F.jpg, http -> https)', async () => {
