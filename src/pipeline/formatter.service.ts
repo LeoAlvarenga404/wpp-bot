@@ -6,6 +6,7 @@ import type { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
 import type { CopyVariant } from '../shared/variant';
+import type { RawDeal } from '../sources/source.port';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
 import { variantBByLevel } from './templates/variants';
 
@@ -82,7 +83,7 @@ export class FormatterService {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
     const [link, hook] = await Promise.all([
-      this.affiliate.resolve(raw.permalink),
+      this.resolveLink(raw),
       this.headline.generate(headlineItem),
     ]);
     const formatBRL = (n: number) => this.formatBRL(n);
@@ -98,6 +99,66 @@ export class FormatterService {
     const caption = `${tmpl(scored, formatBRL, link, hook)}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
+  }
+
+  /**
+   * One WA message bundling several approved deals. Header + one compact
+   * block per deal + single disclaimer. Image comes from the first entry
+   * (gate returns deals sorted by score desc).
+   */
+  async formatDigest(
+    entries: Array<{ scored: ScoredDeal; variant: CopyVariant }>,
+  ): Promise<{ caption: string; imageUrl: string }> {
+    if (entries.length === 0) {
+      throw new Error('formatDigest requires at least one deal');
+    }
+    const links = await Promise.all(
+      entries.map((e) => this.resolveLink(e.scored.deal.raw)),
+    );
+    const blocks = entries.map((e, i) =>
+      this.digestBlock(e.scored, e.variant, links[i]),
+    );
+    const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
+    const caption = [
+      header,
+      '',
+      blocks.join('\n\n➖➖➖\n\n'),
+      '',
+      this.disclaimerLine(),
+    ].join('\n');
+    const imageUrl = this.toHiResImage(
+      entries[0].scored.deal.raw.thumbnail || '',
+    );
+    return { caption, imageUrl };
+  }
+
+  private digestBlock(
+    sd: ScoredDeal,
+    variant: CopyVariant,
+    link: string,
+  ): string {
+    const raw = sd.deal.raw;
+    const emoji =
+      sd.level === 'super' ? '🚨' : sd.level === 'top' ? '🔥' : '✅';
+    const price = raw.priceCents / 100;
+    const original =
+      raw.originalPriceCents != null ? raw.originalPriceCents / 100 : null;
+    const lines = [`${emoji} *${raw.title}*`];
+    if (variant === 'B' && original != null && original > price) {
+      lines.push(`❌ De: ~${this.formatBRL(original)}~`);
+      lines.push(
+        `✅ Por: *${this.formatBRL(price)}* (-${raw.discountPercent}%)`,
+      );
+    } else {
+      lines.push(`💰 *${this.formatBRL(price)}* (-${raw.discountPercent}%)`);
+    }
+    if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
+    lines.push(`👉 ${link}`);
+    return lines.join('\n');
+  }
+
+  private resolveLink(raw: RawDeal): Promise<string> {
+    return this.affiliate.resolve(raw.permalink);
   }
 
   /**
