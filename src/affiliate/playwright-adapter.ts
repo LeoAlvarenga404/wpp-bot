@@ -248,8 +248,17 @@ export class PlaywrightAffiliateAdapter
           `Chromium — please log into mercadolivre.com.br manually, then ` +
           `close the window. The session will be saved on close.`,
       );
-      const headedBrowser = await chromium.launch({ headless: false });
+      const headedBrowser = await chromium.launch({
+        headless: false,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process',
+        ],
+      });
       const headedContext = await headedBrowser.newContext();
+      await headedContext.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
       const page = await headedContext.newPage();
       await page.goto(LINKBUILDER_URL);
 

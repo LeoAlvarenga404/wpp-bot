@@ -217,9 +217,12 @@ export class PipelineService {
         }
       }
 
-      // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
-      // coalesce while waiting in the queue.
-      const jobId = `${catalogKey}:${target.jid}`;
+      // jobId = `<key>_<jid>` so re-enqueues for the same deal+target
+      // coalesce while waiting in the queue. BullMQ only allows a custom
+      // jobId to contain ':' when it splits into exactly 3 segments (legacy
+      // repeatable-job compat) — catalogKey/jid can contain ':' themselves,
+      // so avoid it entirely instead of relying on the segment count.
+      const jobId = `${catalogKey}_${target.jid}`.replace(/:/g, '_');
       try {
         await this.sendQueue.add(
           'send-deal',
@@ -259,7 +262,10 @@ export class PipelineService {
       const keys = chunk.map(({ scored: sd }) => keyToString(sd.deal.key));
       const digestId = `dg-${Date.now()}-${c / digestSize}`;
       for (const target of waTargets) {
-        const jobId = `digest:${target.jid}:${keys.join('+')}`;
+        const jobId = `digest_${target.jid}_${keys.join('+')}`.replace(
+          /:/g,
+          '_',
+        );
         try {
           await this.sendQueue.add(
             'send-digest',
