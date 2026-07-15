@@ -1,33 +1,41 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { analyze } from '../deal-score/price-analytics';
 import type { PriceAnalytics, PriceObservation } from '../deal-score/types';
+import { CURATION_REPO } from './curation.repo';
+import type { CurationRepo, PriceRow } from './curation.repo';
 
 export type { PriceObservation } from '../deal-score/types';
 
 type PriceHistoryStore = Record<string, PriceObservation[]>;
 
-const DEFAULT_FILE = './data/price-history.json';
+const DEFAULT_JSON_FILE = './data/price-history.json';
 const RETENTION_DAYS = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BACKUP_SUFFIX = '.pre-refactor-bak';
 
+/**
+ * Price-history curation. The repo (`PriceHistory` table) is the durable
+ * source of truth; an in-memory `store` is hydrated on boot and write-through
+ * keeps it coherent. Sync read methods (`median`, `historyDays`,
+ * `getAnalytics`, `getLowestPriceBadge`, `isFakeDiscount`) hit the cache —
+ * the dispatch path doesn't tolerate a per-deal DB round trip.
+ */
 @Injectable()
 export class CurationService implements OnModuleInit {
   private readonly logger = new Logger(CurationService.name);
-  private readonly filePath: string = path.resolve(DEFAULT_FILE);
+  private readonly jsonBackfillPath: string = path.resolve(DEFAULT_JSON_FILE);
   private store: PriceHistoryStore = {};
-  private loaded = false;
-  private writeLock: Promise<void> = Promise.resolve();
-  private pendingMigrationFlush = false;
 
   private readonly requireHistory: boolean;
   private readonly discountThreshold: number;
   private readonly minHistoryDays: number;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(CURATION_REPO) private readonly repo: CurationRepo,
+  ) {
     this.requireHistory =
       this.config.get<string>('CURATION_REQUIRE_HISTORY', 'false') === 'true';
     this.discountThreshold = Number(
@@ -39,33 +47,30 @@ export class CurationService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    await this.load();
+    await this.maybeBackfillFromJson();
+    await this.hydrate();
+    await this.gc();
   }
 
-  /**
-   * Append a price observation for `catalogId` at the current time and persist.
-   * Old entries (> RETENTION_DAYS) are pruned on every write.
-   */
   async record(catalogId: string, priceCents: number): Promise<void> {
     if (!catalogId) return;
     if (!Number.isFinite(priceCents) || priceCents < 0) return;
-    if (!this.loaded) await this.load();
-
+    const rounded = Math.round(priceCents);
+    const now = new Date();
     const list = this.store[catalogId] ?? [];
-    list.push({
-      priceCents: Math.round(priceCents),
-      at: new Date().toISOString(),
-    });
+    list.push({ priceCents: rounded, at: now.toISOString() });
     this.store[catalogId] = list;
-
-    this.pruneOlderThan(RETENTION_DAYS);
-    await this.persist();
+    try {
+      await this.repo.insert({
+        catalogId,
+        priceCents: rounded,
+        capturedAt: now,
+      });
+    } catch (err) {
+      this.logger.error('curation insert failed', err as Error);
+    }
   }
 
-  /**
-   * Median priceCents over the last `days` days for a catalog id.
-   * Returns null when no observations are in window.
-   */
   median(catalogId: string, days: number): number | null {
     const prices = this.pricesWithinDays(catalogId, days);
     if (prices.length === 0) return null;
@@ -77,9 +82,6 @@ export class CurationService implements OnModuleInit {
     return sorted[mid];
   }
 
-  /**
-   * Count of distinct calendar days observed for a catalog id (UTC date keys).
-   */
   historyDays(catalogId: string): number {
     const list = this.store[catalogId];
     if (!list || list.length === 0) return 0;
@@ -92,14 +94,6 @@ export class CurationService implements OnModuleInit {
     return distinct.size;
   }
 
-  /**
-   * Return `true` when the current price looks like a fake discount:
-   * currentPriceCents >= median(30d) * threshold AND historyDays >= minHistoryDays.
-   *
-   * When history is below the minimum:
-   *  - if CURATION_REQUIRE_HISTORY=true  → treat as fake (block publish)
-   *  - otherwise                          → return false (allow publish)
-   */
   isFakeDiscount(catalogId: string, currentPriceCents: number): boolean {
     const days = this.historyDays(catalogId);
     if (days < this.minHistoryDays) {
@@ -110,29 +104,15 @@ export class CurationService implements OnModuleInit {
     return currentPriceCents >= med * this.discountThreshold;
   }
 
-  /**
-   * Read-only snapshot of stored observations for a catalog id.
-   */
   getObservations(catalogId: string): PriceObservation[] {
     const list = this.store[catalogId];
     return list ? [...list] : [];
   }
 
-  /**
-   * Windowed price analytics computed from stored observations.
-   *
-   * @param now Optional clock injection — used for deterministic tests and
-   *            replaying historical state. Defaults to `new Date()`.
-   */
   getAnalytics(catalogId: string, now?: Date): PriceAnalytics {
     return analyze({ observations: this.getObservations(catalogId), now });
   }
 
-  /**
-   * Returns a badge string when the current price is at-or-below the historical
-   * minimum for the longest applicable window (30 > 14 > 7). Returns null when
-   * history is below the minimum.
-   */
   getLowestPriceBadge(
     catalogId: string,
     currentPriceCents: number,
@@ -178,134 +158,109 @@ export class CurationService implements OnModuleInit {
     return m;
   }
 
-  private pruneOlderThan(days: number): void {
-    const cutoff = Date.now() - days * DAY_MS;
-    let removed = 0;
+  private async hydrate(): Promise<void> {
+    let rows: PriceRow[];
+    try {
+      rows = await this.repo.loadAll(RETENTION_DAYS);
+    } catch (err) {
+      this.logger.error('curation hydrate failed', err as Error);
+      return;
+    }
+    for (const r of rows) {
+      const list = this.store[r.catalogId] ?? [];
+      list.push({
+        priceCents: r.priceCents,
+        at: r.capturedAt.toISOString(),
+      });
+      this.store[r.catalogId] = list;
+    }
+    const count = rows.length;
+    this.logger.log(
+      `Hydrated ${count} price observations across ${Object.keys(this.store).length} catalogs`,
+    );
+  }
+
+  private async gc(): Promise<void> {
+    const cutoff = new Date(Date.now() - RETENTION_DAYS * DAY_MS);
+    try {
+      const pruned = await this.repo.pruneOlderThan(cutoff);
+      if (pruned > 0) {
+        this.logger.log(`Curation GC: pruned ${pruned} stale observations`);
+      }
+    } catch (err) {
+      this.logger.warn(`Curation GC failed: ${(err as Error).message}`);
+    }
+    // Mirror pruning in memory too.
+    const cutoffMs = cutoff.getTime();
     for (const [id, list] of Object.entries(this.store)) {
       const kept = list.filter((obs) => {
         const t = Date.parse(obs.at);
-        return !Number.isNaN(t) && t >= cutoff;
+        return !Number.isNaN(t) && t >= cutoffMs;
       });
-      removed += list.length - kept.length;
       if (kept.length === 0) {
         delete this.store[id];
       } else {
         this.store[id] = kept;
       }
     }
-    if (removed > 0) {
-      this.logger.debug(`Pruned ${removed} stale price observations`);
-    }
   }
 
-  private async load(): Promise<void> {
+  private async maybeBackfillFromJson(): Promise<void> {
+    let existing: number;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        this.store = parsed as PriceHistoryStore;
-      } else {
-        this.store = {};
-      }
-      const count = Object.values(this.store).reduce(
-        (acc, v) => acc + (Array.isArray(v) ? v.length : 0),
-        0,
-      );
-      this.logger.log(
-        `Loaded ${count} price observations across ${Object.keys(this.store).length} catalogs from ${this.filePath}`,
-      );
+      existing = await this.repo.count();
+    } catch (err) {
+      this.logger.error('curation count() failed', err as Error);
+      return;
+    }
+    if (existing > 0) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.jsonBackfillPath, 'utf8');
     } catch (err: any) {
-      if (err && err.code === 'ENOENT') {
-        this.logger.warn(
-          `${this.filePath} not found — starting empty price history`,
-        );
-        this.store = {};
-      } else {
-        this.logger.error(`Failed to load ${this.filePath}`, err as Error);
-        this.store = {};
-      }
+      if (err && err.code === 'ENOENT') return;
+      this.logger.warn(
+        `Failed to read ${this.jsonBackfillPath}: ${(err as Error).message}`,
+      );
+      return;
     }
 
-    const backupEnabled =
-      (process.env.SOURCES_MIGRATION_BACKUP ?? 'true').toLowerCase() === 'true';
-    if (backupEnabled) {
-      try {
-        const backupPath = `${this.filePath}${BACKUP_SUFFIX}`;
-        try {
-          await fs.access(backupPath);
-          // already exists - skip
-        } catch {
-          const raw = await fs.readFile(this.filePath, 'utf8').catch(() => '');
-          if (raw) {
-            await fs.writeFile(backupPath, raw, {
-              encoding: 'utf8',
-              mode: 0o600,
-            });
-            this.logger.log(`Pre-refactor backup saved -> ${backupPath}`);
-          }
-        }
-      } catch (err) {
-        this.logger.warn(
-          `Backup failed (continuing): ${(err as Error).message}`,
-        );
-      }
-    }
-
-    let migrated = 0;
-    for (const k of Object.keys(this.store)) {
-      if (!k.includes(':')) {
-        const newKey = `ml:${k}`;
-        if (!this.store[newKey]) this.store[newKey] = this.store[k];
-        delete this.store[k];
-        migrated++;
-      }
-    }
-    if (migrated > 0) {
-      this.logger.log(`Migrated ${migrated} key(s) to ml: prefix`);
-      this.pendingMigrationFlush = true;
-    }
-
-    this.pruneOlderThan(RETENTION_DAYS);
-
-    if (this.pendingMigrationFlush) {
-      try {
-        await this.persist();
-      } catch (err) {
-        this.logger.error('Failed to flush migrated store', err as Error);
-      }
-      this.pendingMigrationFlush = false;
-    }
-    this.loaded = true;
-  }
-
-  private async persist(): Promise<void> {
-    const next = this.writeLock.then(() => this.persistNow());
-    this.writeLock = next.catch(() => undefined);
-    return next;
-  }
-
-  private async persistNow(): Promise<void> {
-    const dir = path.dirname(this.filePath);
+    let parsed: unknown;
     try {
-      await fs.mkdir(dir, { recursive: true });
-    } catch (err) {
-      this.logger.error(`Failed to ensure dir ${dir}`, err as Error);
-      throw err;
+      parsed = JSON.parse(raw);
+    } catch {
+      this.logger.warn(
+        `Legacy ${this.jsonBackfillPath} is not valid JSON — skipping backfill`,
+      );
+      return;
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
 
-    const data = JSON.stringify(this.store, null, 2);
-    const tmpPath = `${this.filePath}.tmp`;
-    try {
-      await fs.writeFile(tmpPath, data, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmpPath, this.filePath);
-    } catch (err) {
-      this.logger.error(`Failed to write ${this.filePath}`, err as Error);
-      try {
-        await fs.unlink(tmpPath);
-      } catch {
-        // ignore
+    const rows: PriceRow[] = [];
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(v)) continue;
+      const catalogId = k.includes(':') ? k : `ml:${k}`;
+      for (const obs of v as Array<{ priceCents?: unknown; at?: unknown }>) {
+        const priceCents = Number(obs?.priceCents);
+        const ts = typeof obs?.at === 'string' ? Date.parse(obs.at) : NaN;
+        if (!Number.isFinite(priceCents) || Number.isNaN(ts)) continue;
+        rows.push({
+          catalogId,
+          priceCents,
+          capturedAt: new Date(ts),
+        });
       }
-      throw err;
+    }
+    if (rows.length === 0) return;
+
+    try {
+      await this.repo.importMany(rows);
+      this.logger.log(
+        `Backfilled ${rows.length} price observations from ${this.jsonBackfillPath}`,
+      );
+    } catch (err) {
+      this.logger.error('Curation backfill failed', err as Error);
     }
   }
 }

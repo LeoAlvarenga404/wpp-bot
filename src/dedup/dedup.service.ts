@@ -1,24 +1,25 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { DEDUP_REPO } from './dedup.repo';
+import type { DedupRepo } from './dedup.repo';
 
-type PostedLog = Record<string, string>;
-
-const DEFAULT_FILE = './data/posted-log.json';
+const DEFAULT_JSON_FILE = './data/posted-log.json';
 const DEFAULT_GC_WINDOW_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BACKUP_SUFFIX = '.pre-refactor-bak';
 
 @Injectable()
 export class DedupService implements OnModuleInit {
   private readonly logger = new Logger(DedupService.name);
-  private readonly filePath: string = path.resolve(DEFAULT_FILE);
-  private log: PostedLog = {};
-  private loaded = false;
-  private writeLock: Promise<void> = Promise.resolve();
+  private readonly jsonBackfillPath: string = path.resolve(DEFAULT_JSON_FILE);
+
+  constructor(
+    @Inject(DEDUP_REPO) private readonly repo: DedupRepo,
+  ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.load();
+    await this.maybeBackfillFromJson();
+    await this.gc();
   }
 
   /**
@@ -26,9 +27,7 @@ export class DedupService implements OnModuleInit {
    */
   async markPosted(catalogId: string): Promise<void> {
     if (!catalogId) return;
-    if (!this.loaded) await this.load();
-    this.log[catalogId] = new Date().toISOString();
-    await this.persist();
+    await this.repo.markPosted(catalogId, new Date());
   }
 
   /**
@@ -39,134 +38,81 @@ export class DedupService implements OnModuleInit {
     windowDays: number,
   ): Promise<boolean> {
     if (!catalogId) return false;
-    if (!this.loaded) await this.load();
-    const ts = this.log[catalogId];
-    if (!ts) return false;
-    const postedAt = Date.parse(ts);
-    if (Number.isNaN(postedAt)) return false;
-    const ageMs = Date.now() - postedAt;
+    const postedAt = await this.repo.getPostedAt(catalogId);
+    if (!postedAt) return false;
+    const ageMs = Date.now() - postedAt.getTime();
     return ageMs < windowDays * DAY_MS;
   }
 
-  private async load(): Promise<void> {
+  /**
+   * One-shot import from the legacy posted-log.json into the DB. Runs only
+   * when the dedup table is empty and the JSON file is present — repeated
+   * boots are no-ops. Keys without the `<source>:` prefix get `ml:` applied
+   * (legacy data assumes Mercado Livre as the single source).
+   */
+  private async maybeBackfillFromJson(): Promise<void> {
+    let existing: number;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      this.log =
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? (parsed as PostedLog)
-          : {};
-      this.logger.log(
-        `Loaded ${Object.keys(this.log).length} dedup entries from ${this.filePath}`,
-      );
+      existing = await this.repo.count();
+    } catch (err) {
+      this.logger.error('dedup count() failed', err as Error);
+      return;
+    }
+    if (existing > 0) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.jsonBackfillPath, 'utf8');
     } catch (err: any) {
       if (err && err.code === 'ENOENT') {
-        this.logger.warn(
-          `${this.filePath} not found — starting empty dedup log`,
+        this.logger.log(
+          `No legacy ${this.jsonBackfillPath} — starting empty dedup table`,
         );
-        this.log = {};
-      } else {
-        this.logger.error(`Failed to load ${this.filePath}`, err as Error);
-        this.log = {};
+        return;
       }
+      this.logger.warn(
+        `Failed to read ${this.jsonBackfillPath} for backfill: ${(err as Error).message}`,
+      );
+      return;
     }
 
-    const backupEnabled =
-      (process.env.SOURCES_MIGRATION_BACKUP ?? 'true').toLowerCase() === 'true';
-    if (backupEnabled) {
-      try {
-        const backupPath = `${this.filePath}${BACKUP_SUFFIX}`;
-        try {
-          await fs.access(backupPath);
-        } catch {
-          const raw = await fs.readFile(this.filePath, 'utf8').catch(() => '');
-          if (raw) {
-            await fs.writeFile(backupPath, raw, {
-              encoding: 'utf8',
-              mode: 0o600,
-            });
-            this.logger.log(`Pre-refactor backup saved -> ${backupPath}`);
-          }
-        }
-      } catch (err) {
-        this.logger.warn(
-          `Backup failed (continuing): ${(err as Error).message}`,
-        );
-      }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      this.logger.warn(
+        `Legacy ${this.jsonBackfillPath} is not valid JSON — skipping backfill`,
+      );
+      return;
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
 
-    let migrated = 0;
-    for (const k of Object.keys(this.log)) {
-      if (!k.includes(':')) {
-        const newKey = `ml:${k}`;
-        if (!this.log[newKey]) this.log[newKey] = this.log[k];
-        delete this.log[k];
-        migrated++;
-      }
+    const entries: Array<{ catalogId: string; postedAt: Date }> = [];
+    for (const [k, v] of Object.entries(parsed as Record<string, string>)) {
+      const catalogId = k.includes(':') ? k : `ml:${k}`;
+      const ts = Date.parse(typeof v === 'string' ? v : '');
+      if (Number.isNaN(ts)) continue;
+      entries.push({ catalogId, postedAt: new Date(ts) });
     }
-    if (migrated > 0) {
-      this.logger.log(`Migrated ${migrated} dedup key(s) to ml: prefix`);
-      try {
-        await this.persist();
-      } catch (err) {
-        this.logger.error('Failed to persist migrated dedup log', err as Error);
-      }
-    }
+    if (entries.length === 0) return;
 
-    // GC entries older than 2 * windowDays (default 14d for default window 7d).
-    const gcWindowMs = 2 * DEFAULT_GC_WINDOW_DAYS * DAY_MS;
-    const now = Date.now();
-    let pruned = 0;
-    for (const [id, ts] of Object.entries(this.log)) {
-      const t = Date.parse(ts);
-      if (Number.isNaN(t) || now - t > gcWindowMs) {
-        delete this.log[id];
-        pruned++;
-      }
+    try {
+      await this.repo.importMany(entries);
+      this.logger.log(
+        `Backfilled ${entries.length} dedup entries from ${this.jsonBackfillPath}`,
+      );
+    } catch (err) {
+      this.logger.error('Dedup backfill failed', err as Error);
     }
-    if (pruned > 0) {
-      this.logger.log(`Dedup GC: pruned ${pruned} stale entries`);
-      // Persist pruned state to disk.
-      try {
-        await this.persist();
-      } catch (err) {
-        this.logger.error('Failed to persist after GC', err as Error);
-      }
-    }
-
-    this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
-    // Serialize writes to avoid clobbering.
-    const next = this.writeLock.then(() => this.persistNow());
-    this.writeLock = next.catch(() => undefined);
-    return next;
-  }
-
-  private async persistNow(): Promise<void> {
-    const dir = path.dirname(this.filePath);
+  private async gc(): Promise<void> {
+    const cutoff = new Date(Date.now() - 2 * DEFAULT_GC_WINDOW_DAYS * DAY_MS);
     try {
-      await fs.mkdir(dir, { recursive: true });
+      const pruned = await this.repo.pruneOlderThan(cutoff);
+      if (pruned > 0) this.logger.log(`Dedup GC: pruned ${pruned} stale entries`);
     } catch (err) {
-      this.logger.error(`Failed to ensure dir ${dir}`, err as Error);
-      throw err;
-    }
-
-    const data = JSON.stringify(this.log, null, 2);
-    const tmpPath = `${this.filePath}.tmp`;
-    try {
-      await fs.writeFile(tmpPath, data, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmpPath, this.filePath);
-    } catch (err) {
-      this.logger.error(`Failed to write ${this.filePath}`, err as Error);
-      // Best-effort cleanup of the temp file.
-      try {
-        await fs.unlink(tmpPath);
-      } catch {
-        // ignore
-      }
-      throw err;
+      this.logger.error('Dedup GC failed', err as Error);
     }
   }
 }

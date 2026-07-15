@@ -15,6 +15,7 @@ import makeWASocket, {
 import * as Sentry from '@sentry/node';
 import pino from 'pino';
 import * as qrcode from 'qrcode-terminal';
+import { CountersService } from '../metrics/counters.service';
 import { CommandHandler } from './command.handler';
 import { RateLimiterService } from './rate-limiter.service';
 
@@ -36,6 +37,7 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly rateLimiter: RateLimiterService,
     private readonly commandHandler: CommandHandler,
+    private readonly counters: CountersService,
   ) {}
 
   async onModuleInit() {
@@ -77,12 +79,14 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
         this.reconnectExhausted = false;
         this.lastSeen = new Date();
         this.lastDisconnectReason = null;
+        this.counters.baileysConnected.set(1);
         this.logger.log('WhatsApp connected.');
         void this.listGroups();
       }
 
       if (connection === 'close') {
         this.ready = false;
+        this.counters.baileysConnected.set(0);
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
         this.lastDisconnectReason = String(code ?? 'unknown');
 

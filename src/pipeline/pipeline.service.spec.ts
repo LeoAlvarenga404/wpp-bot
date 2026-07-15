@@ -102,6 +102,18 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
   } as any;
   const config = { get: (_k: string, def?: string) => def } as unknown as ConfigService;
 
+  const targets = {
+    getActiveJids: jest.fn(async () => [] as string[]),
+  } as any;
+  const counters = {
+    dedupSkip: { inc: jest.fn() },
+    wppMessagesSent: { labels: jest.fn(() => ({ inc: jest.fn() })) },
+    wppMessagesFailed: { labels: jest.fn(() => ({ inc: jest.fn() })) },
+  } as any;
+  const sendQueue = {
+    add: jest.fn(async () => ({ id: 'job-id' })),
+  } as any;
+
   return {
     fakeSource,
     registry,
@@ -114,12 +126,18 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
       curation,
       registry,
       dealScore,
+      targets,
+      counters,
+      sendQueue,
     ),
     dedup,
     curation,
     dealScore,
     formatter,
     wa,
+    targets,
+    counters,
+    sendQueue,
   };
 }
 

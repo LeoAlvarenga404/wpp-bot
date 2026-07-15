@@ -23,8 +23,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Host port 3001 (container still 3000). Avoids clash with a host
+    # `npm start` on 3000 during local dev.
     ports:
-      - "3000:3000"
+      - "3001:3000"
     volumes:
       - ./auth_info:/app/auth_info
       - ./data:/app/data
@@ -38,12 +40,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: wppbot
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: wppbot
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Host port 5433 (container still 5432). Avoids clash with a host
+    # Postgres on 5432; app reaches it via service DNS on the internal
+    # network as `postgres:5432`.
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wppbot -d wppbot"]
       interval: 10s
@@ -58,8 +63,10 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
+    # Host port 6380 (container still 6379). Avoids clash with a host
+    # Redis on 6379; app reaches it via service DNS as `redis:6379`.
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

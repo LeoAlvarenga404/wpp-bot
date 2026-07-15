@@ -1,106 +1,90 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { OPTOUT_REPO } from './optout.repo';
+import type { OptoutRepo } from './optout.repo';
 
 /**
- * P2-27. Opt-out registry. File-backed JIDs that should never receive sends.
+ * P2-27. Opt-out registry — JIDs that must never receive sends.
+ * Backed by the `WaOptout` Postgres table. On first boot the table is seeded
+ * from the legacy ./data/wa-optout.json if present.
  */
-const DEFAULT_FILE = './data/wa-optout.json';
-
-interface OptoutState {
-  jids: string[];
-}
+const DEFAULT_JSON_FILE = './data/wa-optout.json';
 
 @Injectable()
 export class OptoutService implements OnModuleInit {
   private readonly logger = new Logger(OptoutService.name);
-  private readonly filePath: string = path.resolve(DEFAULT_FILE);
-  private state: OptoutState = { jids: [] };
-  private loaded = false;
-  private writeLock: Promise<void> = Promise.resolve();
+  private readonly jsonBackfillPath: string = path.resolve(DEFAULT_JSON_FILE);
+
+  constructor(@Inject(OPTOUT_REPO) private readonly repo: OptoutRepo) {}
 
   async onModuleInit(): Promise<void> {
-    await this.load();
+    await this.maybeBackfillFromJson();
   }
 
-  isOptedOut(jid: string): boolean {
+  async isOptedOut(jid: string): Promise<boolean> {
     if (!jid) return false;
-    return this.state.jids.includes(jid);
+    return this.repo.has(jid);
   }
 
-  list(): string[] {
-    return [...this.state.jids];
+  async list(): Promise<string[]> {
+    return this.repo.list();
   }
 
   async add(jid: string): Promise<void> {
     if (!jid) return;
-    if (!this.loaded) await this.load();
-    if (this.state.jids.includes(jid)) return;
-    this.state.jids.push(jid);
-    await this.persist();
+    await this.repo.add(jid);
     this.logger.log(`Opt-out added: ${jid}`);
   }
 
   async remove(jid: string): Promise<boolean> {
-    if (!this.loaded) await this.load();
-    const before = this.state.jids.length;
-    this.state.jids = this.state.jids.filter((j) => j !== jid);
-    if (this.state.jids.length === before) return false;
-    await this.persist();
-    return true;
+    return this.repo.remove(jid);
   }
 
-  private async load(): Promise<void> {
+  private async maybeBackfillFromJson(): Promise<void> {
+    let existing: number;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.jids)) {
-        this.state = {
-          jids: parsed.jids.filter((j: any) => typeof j === 'string'),
-        };
-      }
-      this.logger.log(
-        `Loaded ${this.state.jids.length} opt-out entries from ${this.filePath}`,
-      );
+      existing = await this.repo.count();
+    } catch (err) {
+      this.logger.error('optout count() failed', err as Error);
+      return;
+    }
+    if (existing > 0) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.jsonBackfillPath, 'utf8');
     } catch (err: any) {
-      if (err && err.code === 'ENOENT') {
-        this.logger.warn(`${this.filePath} not found — starting empty`);
-        this.state = { jids: [] };
-      } else {
-        this.logger.error(`Failed to load ${this.filePath}`, err as Error);
-        this.state = { jids: [] };
-      }
+      if (err && err.code === 'ENOENT') return;
+      this.logger.warn(
+        `Failed to read ${this.jsonBackfillPath}: ${(err as Error).message}`,
+      );
+      return;
     }
-    this.loaded = true;
-  }
 
-  private async persist(): Promise<void> {
-    const next = this.writeLock.then(() => this.persistNow());
-    this.writeLock = next.catch(() => undefined);
-    return next;
-  }
-
-  private async persistNow(): Promise<void> {
-    const dir = path.dirname(this.filePath);
+    let parsed: unknown;
     try {
-      await fs.mkdir(dir, { recursive: true });
-    } catch (err) {
-      this.logger.error(`Failed to ensure dir ${dir}`, err as Error);
-      throw err;
+      parsed = JSON.parse(raw);
+    } catch {
+      this.logger.warn(
+        `Legacy ${this.jsonBackfillPath} is not valid JSON — skipping backfill`,
+      );
+      return;
     }
-    const data = JSON.stringify(this.state, null, 2);
-    const tmpPath = `${this.filePath}.tmp`;
+    const arr =
+      parsed && typeof parsed === 'object' && Array.isArray((parsed as any).jids)
+        ? ((parsed as any).jids as unknown[])
+        : [];
+    const jids = arr.filter((j): j is string => typeof j === 'string' && j.length > 0);
+    if (jids.length === 0) return;
+
     try {
-      await fs.writeFile(tmpPath, data, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmpPath, this.filePath);
+      await this.repo.importMany(jids);
+      this.logger.log(
+        `Backfilled ${jids.length} opt-out entries from ${this.jsonBackfillPath}`,
+      );
     } catch (err) {
-      this.logger.error(`Failed to write ${this.filePath}`, err as Error);
-      try {
-        await fs.unlink(tmpPath);
-      } catch {
-        // ignore
-      }
-      throw err;
+      this.logger.error('Optout backfill failed', err as Error);
     }
   }
 }

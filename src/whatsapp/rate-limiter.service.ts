@@ -1,7 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { RATE_LIMITER_REPO } from './rate-limiter.repo';
+import type { RateLimiterRepo, WaCounterRow } from './rate-limiter.repo';
 
 /**
  * P1-13. WhatsApp warmup rate limiter.
@@ -12,8 +14,11 @@ import * as path from 'path';
  *   15-30d: 20/h, 150/d
  *   31+d  : 50/h, 400/d
  *
- * Counters bucketed by hour (YYYY-MM-DDTHH) and day (YYYY-MM-DD), persisted
- * to ./data/wa-counters.json so they survive process restarts.
+ * Counters bucketed by hour (YYYY-MM-DDTHH) and day (YYYY-MM-DD). The in-memory
+ * state is hydrated from the `WaCounter` table on boot and write-through on
+ * every recordSend, so the sync `canSend()` path stays a single map lookup
+ * with no DB round trip. Legacy ./data/wa-counters.json is imported once if
+ * the DB table is empty.
  */
 
 type CounterState = {
@@ -21,7 +26,11 @@ type CounterState = {
   day: Record<string, number>;
 };
 
-const DEFAULT_FILE = './data/wa-counters.json';
+const DEFAULT_JSON_FILE = './data/wa-counters.json';
+const BUCKET_HOUR = 'wa-hour';
+const BUCKET_DAY = 'wa-day';
+const HOUR_PREFIX = 'wa:hour:';
+const DAY_PREFIX = 'wa:day:';
 
 export type SendCheck =
   | { allowed: true }
@@ -35,21 +44,26 @@ export interface RateCaps {
 @Injectable()
 export class RateLimiterService implements OnModuleInit {
   private readonly logger = new Logger(RateLimiterService.name);
-  private readonly filePath: string = path.resolve(DEFAULT_FILE);
+  private readonly jsonBackfillPath: string = path.resolve(DEFAULT_JSON_FILE);
   private state: CounterState = { hour: {}, day: {} };
-  private loaded = false;
-  private writeLock: Promise<void> = Promise.resolve();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(RATE_LIMITER_REPO) private readonly repo: RateLimiterRepo,
+  ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.load();
+    await this.maybeBackfillFromJson();
+    await this.hydrate();
+    await this.gc();
+    this.logger.log(
+      `Rate limiter loaded. chipAgeDays=${this.chipAgeDays()} caps=${JSON.stringify(this.getCaps())}`,
+    );
   }
 
-  /** Days since WA_CHIP_FIRST_USE_DATE. Returns 0 if env not set. */
   private chipAgeDays(): number {
     const raw = this.config.get<string>('WA_CHIP_FIRST_USE_DATE', '');
-    if (!raw) return 9999; // unknown -> assume mature
+    if (!raw) return 9999;
     const start = Date.parse(raw);
     if (Number.isNaN(start)) return 9999;
     const diff = Date.now() - start;
@@ -91,12 +105,16 @@ export class RateLimiterService implements OnModuleInit {
   }
 
   async recordSend(): Promise<void> {
-    if (!this.loaded) await this.load();
     const hk = this.hourKey();
     const dk = this.dayKey();
     this.state.hour[hk] = (this.state.hour[hk] ?? 0) + 1;
     this.state.day[dk] = (this.state.day[dk] ?? 0) + 1;
-    await this.persist();
+    try {
+      await this.repo.upsert(`${HOUR_PREFIX}${hk}`, BUCKET_HOUR, this.state.hour[hk]);
+      await this.repo.upsert(`${DAY_PREFIX}${dk}`, BUCKET_DAY, this.state.day[dk]);
+    } catch (err) {
+      this.logger.error('recordSend upsert failed', err as Error);
+    }
   }
 
   getStatus(): {
@@ -114,78 +132,102 @@ export class RateLimiterService implements OnModuleInit {
     };
   }
 
-  private async load(): Promise<void> {
+  private async hydrate(): Promise<void> {
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        this.state = {
-          hour:
-            parsed.hour && typeof parsed.hour === 'object' ? parsed.hour : {},
-          day: parsed.day && typeof parsed.day === 'object' ? parsed.day : {},
-        };
+      const rows = await this.repo.loadAll();
+      for (const r of rows) {
+        if (r.id.startsWith(HOUR_PREFIX)) {
+          this.state.hour[r.id.slice(HOUR_PREFIX.length)] = r.count;
+        } else if (r.id.startsWith(DAY_PREFIX)) {
+          this.state.day[r.id.slice(DAY_PREFIX.length)] = r.count;
+        }
       }
-      this.gc();
-      this.logger.log(
-        `Rate limiter loaded. chipAgeDays=${this.chipAgeDays()} caps=${JSON.stringify(this.getCaps())}`,
-      );
-    } catch (err: any) {
-      if (err && err.code === 'ENOENT') {
-        this.logger.warn(`${this.filePath} not found — starting fresh`);
-        this.state = { hour: {}, day: {} };
-      } else {
-        this.logger.error(`Failed to load ${this.filePath}`, err as Error);
-        this.state = { hour: {}, day: {} };
-      }
+    } catch (err) {
+      this.logger.error('rate-limiter hydrate failed', err as Error);
     }
-    this.loaded = true;
   }
 
   /** Drop buckets older than 2 days (hours) / 14 days (days). */
-  private gc(): void {
+  private async gc(): Promise<void> {
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
+    const stale: string[] = [];
     for (const k of Object.keys(this.state.hour)) {
-      const t = Date.parse(k.replace('T', 'T') + ':00:00Z');
+      const t = Date.parse(k + ':00:00Z');
       if (Number.isNaN(t) || now - t > 2 * dayMs) {
         delete this.state.hour[k];
+        stale.push(`${HOUR_PREFIX}${k}`);
       }
     }
     for (const k of Object.keys(this.state.day)) {
       const t = Date.parse(k + 'T00:00:00Z');
       if (Number.isNaN(t) || now - t > 14 * dayMs) {
         delete this.state.day[k];
+        stale.push(`${DAY_PREFIX}${k}`);
       }
     }
-  }
-
-  private async persist(): Promise<void> {
-    const next = this.writeLock.then(() => this.persistNow());
-    this.writeLock = next.catch(() => undefined);
-    return next;
-  }
-
-  private async persistNow(): Promise<void> {
-    const dir = path.dirname(this.filePath);
-    try {
-      await fs.mkdir(dir, { recursive: true });
-    } catch (err) {
-      this.logger.error(`Failed to ensure dir ${dir}`, err as Error);
-      throw err;
-    }
-    const data = JSON.stringify(this.state, null, 2);
-    const tmpPath = `${this.filePath}.tmp`;
-    try {
-      await fs.writeFile(tmpPath, data, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmpPath, this.filePath);
-    } catch (err) {
-      this.logger.error(`Failed to write ${this.filePath}`, err as Error);
+    if (stale.length > 0) {
       try {
-        await fs.unlink(tmpPath);
-      } catch {
-        // ignore
+        await this.repo.deleteMany(stale);
+      } catch (err) {
+        this.logger.warn(`rate-limiter GC delete failed: ${(err as Error).message}`);
       }
-      throw err;
+    }
+  }
+
+  private async maybeBackfillFromJson(): Promise<void> {
+    let existing: number;
+    try {
+      existing = await this.repo.count();
+    } catch (err) {
+      this.logger.error('rate-limiter count() failed', err as Error);
+      return;
+    }
+    if (existing > 0) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.jsonBackfillPath, 'utf8');
+    } catch (err: any) {
+      if (err && err.code === 'ENOENT') return;
+      this.logger.warn(
+        `Failed to read ${this.jsonBackfillPath}: ${(err as Error).message}`,
+      );
+      return;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      this.logger.warn(
+        `Legacy ${this.jsonBackfillPath} is not valid JSON — skipping backfill`,
+      );
+      return;
+    }
+
+    const rows: WaCounterRow[] = [];
+    if (parsed?.hour && typeof parsed.hour === 'object') {
+      for (const [k, v] of Object.entries(parsed.hour)) {
+        if (typeof v !== 'number') continue;
+        rows.push({ id: `${HOUR_PREFIX}${k}`, bucket: BUCKET_HOUR, count: v });
+      }
+    }
+    if (parsed?.day && typeof parsed.day === 'object') {
+      for (const [k, v] of Object.entries(parsed.day)) {
+        if (typeof v !== 'number') continue;
+        rows.push({ id: `${DAY_PREFIX}${k}`, bucket: BUCKET_DAY, count: v });
+      }
+    }
+    if (rows.length === 0) return;
+
+    try {
+      await this.repo.importMany(rows);
+      this.logger.log(
+        `Backfilled ${rows.length} rate-limiter buckets from ${this.jsonBackfillPath}`,
+      );
+    } catch (err) {
+      this.logger.error('rate-limiter backfill failed', err as Error);
     }
   }
 }

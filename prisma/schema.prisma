@@ -14,7 +14,11 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // `native` covers the host running prisma migrate / studio; explicit
+  // debian-openssl-3.0.x ships the engine into the Docker runtime image
+  // (node:22-bookworm-slim, with openssl 3.x) without a host-side regen.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 // ---------------------------------------------------------------------------
@@ -22,42 +26,45 @@ generator client {
 // ---------------------------------------------------------------------------
 
 model Product {
-  catalogId    String   @id
-  title        String
-  thumbnail    String?
-  domainId     String?
-  lastSeenAt   DateTime
-  priceHistory PriceHistory[]
-  sentMessages SentMessage[]
+  catalogId  String   @id
+  title      String?
+  thumbnail  String?
+  domainId   String?
+  lastSeenAt DateTime @default(now())
 }
 
+// Price observations recorded by CurationService. No FK to Product — the
+// curation pipeline records prices for catalogIds it discovers in raw feeds
+// before any Product row exists, and forcing a join here would cascade
+// stub-product upserts into every record() call.
 model PriceHistory {
   id                 BigInt   @id @default(autoincrement())
   catalogId          String
-  itemId             String
+  itemId             String?
   priceCents         Int
   originalPriceCents Int?
   capturedAt         DateTime @default(now())
-  product            Product  @relation(fields: [catalogId], references: [catalogId])
 
   @@index([catalogId, capturedAt])
 }
 
+// Outbound message audit log. Standalone — see comment on PriceHistory above.
 model SentMessage {
   id        BigInt   @id @default(autoincrement())
   catalogId String
   targetJid String
   caption   String
   sentAt    DateTime @default(now())
-  product   Product  @relation(fields: [catalogId], references: [catalogId])
 
   @@index([catalogId, sentAt])
 }
 
+// Cache of long-URL → short-URL pairs resolved by the Playwright affiliate
+// adapter. `longUrl` is the natural key — we always look up by the original
+// product URL that came out of the source feed.
 model AffiliateLink {
-  catalogId   String   @id
+  longUrl     String   @id
   shortUrl    String
-  longUrl     String?
   generatedAt DateTime @default(now())
 }
 

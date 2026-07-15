@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Browser, BrowserContext, Page } from 'playwright';
+import { PrismaService } from '../db/prisma.service';
 import { AffiliateLinkPort } from './affiliate-link.port';
 
 const LINKBUILDER_URL = 'https://www.mercadolivre.com.br/afiliados/linkbuilder';
@@ -50,11 +51,14 @@ export class PlaywrightAffiliateAdapter
   private context: BrowserContext | null = null;
   private initPromise: Promise<void> | null = null;
 
-  private cache: Record<string, string> = {};
+  private cache: Map<string, string> = new Map();
   private cachePath = path.resolve('./data/playwright-cache.json');
   private statePath = path.resolve('./auth_info/playwright-state.json');
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     this.statePath = path.resolve(
@@ -70,6 +74,7 @@ export class PlaywrightAffiliateAdapter
       ),
     );
     await this.loadCache();
+    await this.maybeBackfillFromJson();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -84,7 +89,8 @@ export class PlaywrightAffiliateAdapter
   }
 
   async resolve(originalUrl: string): Promise<string> {
-    if (this.cache[originalUrl]) return this.cache[originalUrl];
+    const cached = this.cache.get(originalUrl);
+    if (cached) return cached;
 
     await this.ensureBrowser();
     if (!this.context) {
@@ -94,8 +100,8 @@ export class PlaywrightAffiliateAdapter
     const page = await this.context.newPage();
     try {
       const shortUrl = await this.runLinkbuilder(page, originalUrl);
-      this.cache[originalUrl] = shortUrl;
-      await this.saveCache();
+      this.cache.set(originalUrl, shortUrl);
+      await this.saveLink(originalUrl, shortUrl);
       return shortUrl;
     } finally {
       await page.close().catch(() => undefined);
@@ -312,35 +318,92 @@ export class PlaywrightAffiliateAdapter
 
   private async loadCache(): Promise<void> {
     try {
-      const raw = await fs.readFile(this.cachePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      this.cache =
-        parsed && typeof parsed === 'object'
-          ? (parsed as Record<string, string>)
-          : {};
-      this.logger.log(
-        `Loaded ${Object.keys(this.cache).length} playwright-resolved links from ${this.cachePath}`,
+      const rows = await (this.prisma as any).affiliateLink.findMany({
+        select: { longUrl: true, shortUrl: true },
+      });
+      this.cache = new Map(
+        rows.map((r: any) => [r.longUrl as string, r.shortUrl as string]),
       );
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.cache = {};
-      } else {
-        this.logger.warn(`Failed to read ${this.cachePath}: ${String(err)}`);
-        this.cache = {};
-      }
+      this.logger.log(
+        `Loaded ${this.cache.size} affiliate links from AffiliateLink table`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to hydrate affiliate cache from DB: ${(err as Error).message}`,
+      );
+      this.cache = new Map();
     }
   }
 
-  private async saveCache(): Promise<void> {
+  private async saveLink(longUrl: string, shortUrl: string): Promise<void> {
     try {
-      await fs.mkdir(path.dirname(this.cachePath), { recursive: true });
-      await fs.writeFile(
-        this.cachePath,
-        JSON.stringify(this.cache, null, 2),
-        'utf8',
-      );
+      await (this.prisma as any).affiliateLink.upsert({
+        where: { longUrl },
+        create: { longUrl, shortUrl },
+        update: { shortUrl, generatedAt: new Date() },
+      });
     } catch (err) {
-      this.logger.warn(`Failed to persist playwright cache: ${String(err)}`);
+      this.logger.warn(
+        `Failed to persist affiliate link to DB: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * One-shot import of legacy ./data/playwright-cache.json into the
+   * AffiliateLink table. Runs only when the table is empty, so repeated
+   * boots are no-ops.
+   */
+  private async maybeBackfillFromJson(): Promise<void> {
+    let existing: number;
+    try {
+      existing = await (this.prisma as any).affiliateLink.count();
+    } catch (err) {
+      this.logger.warn(`affiliate count() failed: ${(err as Error).message}`);
+      return;
+    }
+    if (existing > 0) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.cachePath, 'utf8');
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return;
+      this.logger.warn(`Failed to read ${this.cachePath}: ${String(err)}`);
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      this.logger.warn(
+        `Legacy ${this.cachePath} is not valid JSON — skipping backfill`,
+      );
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+    const rows: Array<{ longUrl: string; shortUrl: string }> = [];
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v !== 'string' || !k || !v) continue;
+      rows.push({ longUrl: k, shortUrl: v });
+    }
+    if (rows.length === 0) return;
+
+    try {
+      await (this.prisma as any).affiliateLink.createMany({
+        data: rows,
+        skipDuplicates: true,
+      });
+      this.logger.log(
+        `Backfilled ${rows.length} affiliate links from ${this.cachePath}`,
+      );
+      for (const r of rows) this.cache.set(r.longUrl, r.shortUrl);
+    } catch (err) {
+      this.logger.warn(
+        `affiliate backfill failed: ${(err as Error).message}`,
+      );
     }
   }
 

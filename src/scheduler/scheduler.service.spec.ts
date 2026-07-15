@@ -26,8 +26,8 @@ function makePipeline(): PipelineService {
     collectScored: jest.fn(async (): Promise<ScoredDeal[]> => []),
     collectScoredOne: jest.fn(async (): Promise<ScoredDeal[]> => []),
     collectAllScored: jest.fn(async (): Promise<ScoredDeal[]> => []),
-    dispatchScored: jest.fn(async () => ({ sent: 0, failed: 0, topScore: null })),
-    runOnce: jest.fn(async () => ({ sent: 0, failed: 0, scored: 0, topScore: null, sourceId: 'ml' })),
+    enqueueScored: jest.fn(async () => ({ enqueued: 0, targets: 0, topScore: null })),
+    runOnce: jest.fn(async () => ({ enqueued: 0, targets: 0, scored: 0, topScore: null, sourceId: 'ml' })),
   } as unknown as PipelineService;
 }
 
@@ -45,7 +45,7 @@ function makeConfig(env: Record<string, string>): ConfigService {
 }
 
 describe('SchedulerService.tickBatch', () => {
-  it('calls pipeline.collectAllScored then dispatchScored', async () => {
+  it('calls pipeline.collectAllScored then enqueueScored', async () => {
     const env = {
       SCHEDULER_ENABLED: 'true',
       SCHEDULER_MODE: 'batch',
@@ -63,7 +63,7 @@ describe('SchedulerService.tickBatch', () => {
     await svc.tick();
 
     expect(pipeline.collectAllScored).toHaveBeenCalled();
-    expect(pipeline.dispatchScored).toHaveBeenCalled();
+    expect(pipeline.enqueueScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
 });
@@ -83,7 +83,7 @@ describe('SchedulerService.tickLegacy', () => {
     await svc.tick();
 
     expect(pipeline.collectScoredOne).toHaveBeenCalledWith('ml');
-    expect(pipeline.dispatchScored).toHaveBeenCalled();
+    expect(pipeline.enqueueScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
 });

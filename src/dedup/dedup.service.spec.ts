@@ -1,173 +1,174 @@
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { DedupRepo } from './dedup.repo';
 import { DedupService } from './dedup.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-async function buildService(initial?: Record<string, string>): Promise<{
+/**
+ * In-memory DedupRepo used by these tests. Mirrors the contract of
+ * PrismaDedupRepo without a real Postgres dependency.
+ */
+class InMemoryDedupRepo implements DedupRepo {
+  private store = new Map<string, Date>();
+
+  async markPosted(catalogId: string, postedAt: Date): Promise<void> {
+    this.store.set(catalogId, postedAt);
+  }
+  async getPostedAt(catalogId: string): Promise<Date | null> {
+    return this.store.get(catalogId) ?? null;
+  }
+  async pruneOlderThan(cutoff: Date): Promise<number> {
+    let pruned = 0;
+    for (const [k, v] of this.store) {
+      if (v.getTime() < cutoff.getTime()) {
+        this.store.delete(k);
+        pruned++;
+      }
+    }
+    return pruned;
+  }
+  async count(): Promise<number> {
+    return this.store.size;
+  }
+  async importMany(entries: Array<{ catalogId: string; postedAt: Date }>): Promise<void> {
+    for (const e of entries) {
+      if (!this.store.has(e.catalogId)) this.store.set(e.catalogId, e.postedAt);
+    }
+  }
+}
+
+async function buildService(seed?: Record<string, string>): Promise<{
   service: DedupService;
+  repo: InMemoryDedupRepo;
   tmpDir: string;
-  filePath: string;
+  jsonPath: string;
 }> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wpp-dedup-'));
-  const filePath = path.join(tmpDir, 'posted-log.json');
-  if (initial) {
-    await fs.writeFile(filePath, JSON.stringify(initial, null, 2), 'utf8');
+  const jsonPath = path.join(tmpDir, 'posted-log.json');
+  if (seed) {
+    await fs.writeFile(jsonPath, JSON.stringify(seed, null, 2), 'utf8');
   }
-  const service = new DedupService();
-  // Override the hardcoded path on the private field.
-  (service as any).filePath = filePath;
+  const repo = new InMemoryDedupRepo();
+  const service = new DedupService(repo);
+  (service as any).jsonBackfillPath = jsonPath;
   await service.onModuleInit();
-  return { service, tmpDir, filePath };
+  return { service, repo, tmpDir, jsonPath };
 }
 
 describe('DedupService', () => {
-  const created: string[] = [];
+  const cleanup: string[] = [];
 
   afterEach(async () => {
-    while (created.length) {
-      const dir = created.pop()!;
-      try {
-        await fs.rm(dir, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
+    while (cleanup.length) {
+      const d = cleanup.pop()!;
+      try { await fs.rm(d, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   });
 
   it('markPosted + wasRecentlyPosted within window returns true', async () => {
     const { service, tmpDir } = await buildService();
-    created.push(tmpDir);
+    cleanup.push(tmpDir);
 
-    await service.markPosted('MLB123');
+    await service.markPosted('ml:MLB123');
 
-    expect(await service.wasRecentlyPosted('MLB123', 7)).toBe(true);
+    expect(await service.wasRecentlyPosted('ml:MLB123', 7)).toBe(true);
   });
 
   it('wasRecentlyPosted returns false when outside the window', async () => {
-    // Seed an entry posted 10 days ago, query with windowDays=7.
     const tenDaysAgo = new Date(Date.now() - 10 * DAY_MS).toISOString();
-    const { service, tmpDir } = await buildService({ MLB999: tenDaysAgo });
-    created.push(tmpDir);
+    const { service, tmpDir } = await buildService({ 'ml:MLB999': tenDaysAgo });
+    cleanup.push(tmpDir);
 
-    // GC at load prunes entries older than 2*7=14 days, so 10 days is kept.
-    expect(await service.wasRecentlyPosted('MLB999', 7)).toBe(false);
+    // 10 days exceeds windowDays=7
+    expect(await service.wasRecentlyPosted('ml:MLB999', 7)).toBe(false);
   });
 
   it('wasRecentlyPosted returns false for unknown id', async () => {
     const { service, tmpDir } = await buildService();
-    created.push(tmpDir);
+    cleanup.push(tmpDir);
 
     expect(await service.wasRecentlyPosted('UNKNOWN', 7)).toBe(false);
   });
 
-  it('persists entries to disk', async () => {
-    const { service, tmpDir, filePath } = await buildService();
-    created.push(tmpDir);
+  it('persists entries through the repo', async () => {
+    const { service, repo, tmpDir } = await buildService();
+    cleanup.push(tmpDir);
 
-    await service.markPosted('MLB42');
+    await service.markPosted('ml:MLB42');
 
-    const raw = await fs.readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    expect(parsed.MLB42).toBeTruthy();
+    expect(await repo.getPostedAt('ml:MLB42')).toBeInstanceOf(Date);
   });
 
   it('GC removes entries older than 2 * windowDays (default 14d) on load', async () => {
     const twentyDaysAgo = new Date(Date.now() - 20 * DAY_MS).toISOString();
     const freshIso = new Date().toISOString();
-    // Seed with ml:-prefixed keys so the boot migration is a no-op for them.
-    const { service, tmpDir, filePath } = await buildService({
+    const { service, repo, tmpDir } = await buildService({
       'ml:OLD': twentyDaysAgo,
       'ml:FRESH': freshIso,
     });
-    created.push(tmpDir);
+    cleanup.push(tmpDir);
 
     expect(await service.wasRecentlyPosted('ml:OLD', 7)).toBe(false);
     expect(await service.wasRecentlyPosted('ml:FRESH', 7)).toBe(true);
-
-    // On-disk file should have been rewritten without OLD.
-    const raw = await fs.readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    expect(parsed['ml:OLD']).toBeUndefined();
-    expect(parsed['ml:FRESH']).toBeTruthy();
+    expect(await repo.getPostedAt('ml:OLD')).toBeNull();
   });
 
   it('handles corrupt JSON gracefully (error path)', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wpp-dedup-'));
-    created.push(tmpDir);
-    const filePath = path.join(tmpDir, 'posted-log.json');
-    await fs.writeFile(filePath, 'not-json', 'utf8');
+    cleanup.push(tmpDir);
+    const jsonPath = path.join(tmpDir, 'posted-log.json');
+    await fs.writeFile(jsonPath, 'not-json', 'utf8');
 
-    const service = new DedupService();
-    (service as any).filePath = filePath;
+    const repo = new InMemoryDedupRepo();
+    const service = new DedupService(repo);
+    (service as any).jsonBackfillPath = jsonPath;
     await service.onModuleInit();
 
-    // After init failure, service should treat log as empty (no throw).
     expect(await service.wasRecentlyPosted('ANY', 7)).toBe(false);
   });
 
   it('ignores empty catalogId on markPosted', async () => {
-    const { service, tmpDir, filePath } = await buildService();
-    created.push(tmpDir);
+    const { service, repo, tmpDir } = await buildService();
+    cleanup.push(tmpDir);
 
     await service.markPosted('');
 
-    // File should remain absent or empty object.
-    try {
-      const raw = await fs.readFile(filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      expect(Object.keys(parsed)).toHaveLength(0);
-    } catch {
-      // file may not have been created at all — that's fine.
-    }
-  });
-});
-
-const TMP_FILE = path.resolve('./data/posted-log.test.json');
-
-function makeService(): DedupService {
-  const svc = new DedupService();
-  (svc as any).filePath = TMP_FILE;
-  return svc;
-}
-
-describe('DedupService boot migration', () => {
-  beforeEach(async () => {
-    try { await fs.unlink(TMP_FILE); } catch {}
-  });
-  afterAll(async () => {
-    try { await fs.unlink(TMP_FILE); } catch {}
+    expect(await repo.count()).toBe(0);
   });
 
-  it('prefixes unprefixed keys with ml: on load', async () => {
+  it('prefixes unprefixed legacy keys with ml: during backfill', async () => {
+    const now = new Date().toISOString();
+    const { service, repo, tmpDir } = await buildService({
+      MLB1: now,
+      'ml:MLB2': now,
+    });
+    cleanup.push(tmpDir);
+
+    expect(await service.wasRecentlyPosted('ml:MLB1', 7)).toBe(true);
+    expect(await service.wasRecentlyPosted('ml:MLB2', 7)).toBe(true);
+    expect(await service.wasRecentlyPosted('MLB1', 7)).toBe(false);
+    expect(await repo.count()).toBe(2);
+  });
+
+  it('backfill is a no-op when repo already has entries', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wpp-dedup-'));
+    cleanup.push(tmpDir);
+    const jsonPath = path.join(tmpDir, 'posted-log.json');
     await fs.writeFile(
-      TMP_FILE,
-      JSON.stringify({
-        MLB1: new Date().toISOString(),
-        'ml:MLB2': new Date().toISOString(),
-      }),
-      'utf8',
-    );
-    const svc = makeService();
-    await svc.onModuleInit();
-    expect(await svc.wasRecentlyPosted('ml:MLB1', 7)).toBe(true);
-    expect(await svc.wasRecentlyPosted('ml:MLB2', 7)).toBe(true);
-    expect(await svc.wasRecentlyPosted('MLB1', 7)).toBe(false);
-  });
-
-  it('migration is idempotent', async () => {
-    await fs.writeFile(
-      TMP_FILE,
+      jsonPath,
       JSON.stringify({ MLB1: new Date().toISOString() }),
       'utf8',
     );
-    const svc1 = makeService();
-    await svc1.onModuleInit();
-    await svc1.markPosted('ml:MLB3');
-    const svc2 = makeService();
-    await svc2.onModuleInit();
-    expect(await svc2.wasRecentlyPosted('ml:MLB1', 7)).toBe(true);
-    expect(await svc2.wasRecentlyPosted('ml:MLB3', 7)).toBe(true);
+
+    const repo = new InMemoryDedupRepo();
+    await repo.markPosted('ml:PREEXISTING', new Date());
+    const service = new DedupService(repo);
+    (service as any).jsonBackfillPath = jsonPath;
+    await service.onModuleInit();
+
+    expect(await repo.count()).toBe(1);
+    expect(await service.wasRecentlyPosted('ml:MLB1', 7)).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/node';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { firstValueFrom } from 'rxjs';
+import { PrismaService } from '../db/prisma.service';
 
 const TOKEN_URL = 'https://api.mercadolibre.com/oauth/token';
 const RENEW_SAFETY_MS = 5 * 60 * 1000;
@@ -41,12 +42,16 @@ export class MercadoLivreAuthService implements OnModuleInit {
   constructor(
     private readonly http: HttpService,
     private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async onModuleInit() {
     const authDir = this.config.get<string>('WA_AUTH_DIR', './auth_info');
     this.tokenFile = path.join(authDir, 'ml-token.json');
-    await this.loadFromFile();
+    await this.loadFromDb();
+    if (!this.token) {
+      await this.backfillFromFile();
+    }
   }
 
   buildAuthorizeUrl(state?: string): string {
@@ -96,7 +101,7 @@ export class MercadoLivreAuthService implements OnModuleInit {
     );
 
     const stored = this.toStored(data);
-    await this.saveToFile(stored);
+    await this.persist(stored);
     this.token = stored;
     this.logger.log(
       `Token stored. user_id=${stored.user_id} expires_in=${data.expires_in}s`,
@@ -150,7 +155,7 @@ export class MercadoLivreAuthService implements OnModuleInit {
       );
 
       const stored = this.toStored(data);
-      await this.saveToFile(stored);
+      await this.persist(stored);
       this.token = stored;
       this.consecutiveRefreshFailures = 0;
       this.lastRefreshAt = Date.now();
@@ -226,31 +231,83 @@ export class MercadoLivreAuthService implements OnModuleInit {
     };
   }
 
-  private async saveToFile(token: StoredToken): Promise<void> {
-    await fs.mkdir(path.dirname(this.tokenFile), { recursive: true });
-    await fs.writeFile(this.tokenFile, JSON.stringify(token, null, 2), {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
+  private async persist(token: StoredToken): Promise<void> {
+    try {
+      await (this.prisma as any).mlToken.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token,
+          expiresAt: new Date(token.expires_at),
+          userId: token.user_id != null ? BigInt(token.user_id) : null,
+          scope: token.scope,
+        },
+        update: {
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token,
+          expiresAt: new Date(token.expires_at),
+          userId: token.user_id != null ? BigInt(token.user_id) : null,
+          scope: token.scope,
+        },
+      });
+    } catch (err) {
+      this.logger.error('Failed to persist ML token to DB', err as Error);
+      throw err;
+    }
   }
 
-  private async loadFromFile(): Promise<void> {
+  private async loadFromDb(): Promise<void> {
     try {
-      const raw = await fs.readFile(this.tokenFile, 'utf8');
-      this.token = JSON.parse(raw) as StoredToken;
+      const row = await (this.prisma as any).mlToken.findUnique({
+        where: { id: 1 },
+      });
+      if (!row) return;
+      this.token = {
+        access_token: row.accessToken,
+        refresh_token: row.refreshToken ?? null,
+        expires_at: row.expiresAt.getTime(),
+        user_id: row.userId != null ? Number(row.userId) : null,
+        scope: row.scope,
+        obtained_at: row.updatedAt ? row.updatedAt.getTime() : Date.now(),
+      };
       this.logger.log(
-        `Loaded ML token from file. user_id=${this.token.user_id} expires_at=${new Date(
+        `Loaded ML token from DB. user_id=${this.token.user_id} expires_at=${new Date(
           this.token.expires_at,
         ).toISOString()}`,
       );
+    } catch (err) {
+      this.logger.error('Failed to load ML token from DB', err as Error);
+    }
+  }
+
+  /**
+   * One-shot import from auth_info/ml-token.json into the DB. Runs only when
+   * the DB has no token yet — repeated boots are no-ops.
+   */
+  private async backfillFromFile(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.tokenFile, 'utf8');
     } catch (err: any) {
       if (err?.code === 'ENOENT') {
         this.logger.warn(
-          'No ML token file found. Visit GET /oauth/authorize to authorize.',
+          'No ML token in DB or file. Visit GET /oauth/authorize to authorize.',
         );
       } else {
-        this.logger.error('Failed to load ML token file', err);
+        this.logger.error('Failed to read legacy ML token file', err);
       }
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as StoredToken;
+      await this.persist(parsed);
+      this.token = parsed;
+      this.logger.log(
+        `Backfilled ML token from ${this.tokenFile} into DB. user_id=${parsed.user_id}`,
+      );
+    } catch (err) {
+      this.logger.error('Failed to backfill ML token from file', err as Error);
     }
   }
 

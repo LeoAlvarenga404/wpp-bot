@@ -6,6 +6,7 @@ import { DealScoreModule } from '../deal-score/deal-score.module';
 import { DedupModule } from '../dedup/dedup.module';
 import { HeadlineModule } from '../headline/headline.module';
 import { MercadoLivreModule } from '../mercado-livre/ml.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { WhatsappModule } from '../whatsapp/wa.module';
 import { FormatterService } from './formatter.service';
 import { PipelineController } from './pipeline.controller';
@@ -14,10 +15,10 @@ import { PipelineService } from './pipeline.service';
 @Module({
   imports: [
     MercadoLivreModule, WhatsappModule, AffiliateModule, DedupModule,
-    CurationModule, HeadlineModule, AuthModule, DealScoreModule,
+    CurationModule, HeadlineModule, AuthModule, DealScoreModule, MetricsModule,
   ],
   controllers: [PipelineController],
   providers: [PipelineService, FormatterService],
-  exports: [PipelineService],
+  exports: [PipelineService, FormatterService],
 })
 export class PipelineModule {}

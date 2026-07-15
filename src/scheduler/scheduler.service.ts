@@ -52,17 +52,45 @@ export class SchedulerService {
     await this.tickLegacy();
   }
 
+  /**
+   * Whether this scheduler tick should enqueue WhatsApp jobs after the
+   * collect+score phase. When false (`SCHEDULER_DISPATCH_ENABLED=false`),
+   * the tick still drives the full pipeline so price history / seller cache /
+   * dedup keep accruing — but no jobs hit the queue. Useful for a "warmup"
+   * phase where you want the score / median / lowest-price signals to
+   * stabilize before turning sends back on.
+   */
+  private dispatchEnabled(): boolean {
+    // NOTE: no `?? process.env.X` fallback here. ConfigService already reads
+    // process.env in production (ConfigModule.forRoot). A direct process.env
+    // read makes unit tests environment-dependent: requiring @prisma/client
+    // side-loads the repo's .env into process.env, so a local
+    // SCHEDULER_DISPATCH_ENABLED=false silently flipped this to collect-only
+    // inside Jest.
+    const raw =
+      this.config.get<string>('SCHEDULER_DISPATCH_ENABLED') ?? 'true';
+    return raw.toLowerCase() !== 'false';
+  }
+
   private async tickBatch(): Promise<void> {
     const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
     const startedAt = Date.now();
+    const dispatch = this.dispatchEnabled();
     try {
       const allScored = await this.pipeline.collectAllScored();
-      const dispatch = await this.pipeline.dispatchScored(allScored, maxDeals);
       const ms = Date.now() - startedAt;
+      if (!dispatch) {
+        this.logger.log(
+          `Scheduler tick batch (collect-only) - totalScored=${allScored.length} ` +
+            `topScore=${allScored[0]?.score ?? 'n/a'} took=${ms}ms`,
+        );
+        return;
+      }
+      const result = await this.pipeline.enqueueScored(allScored, maxDeals);
       this.logger.log(
         `Scheduler tick batch - totalScored=${allScored.length} ` +
-          `dispatched=${dispatch.sent} failed=${dispatch.failed} ` +
-          `topScore=${dispatch.topScore ?? 'n/a'} took=${ms}ms`,
+          `enqueued=${result.enqueued} targets=${result.targets} ` +
+          `topScore=${result.topScore ?? 'n/a'} took=${ms}ms`,
       );
     } catch (err) {
       const ms = Date.now() - startedAt;
@@ -81,13 +109,21 @@ export class SchedulerService {
     }
     const maxDeals = Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
     const startedAt = Date.now();
+    const dispatch = this.dispatchEnabled();
     try {
       const scored = await this.pipeline.collectScoredOne(sourceId);
-      const dispatch = await this.pipeline.dispatchScored(scored, maxDeals);
       const ms = Date.now() - startedAt;
+      if (!dispatch) {
+        this.logger.log(
+          `Scheduler tick legacy (collect-only) - source=${sourceId} ` +
+            `scored=${scored.length} topScore=${scored[0]?.score ?? 'n/a'} took=${ms}ms`,
+        );
+        return;
+      }
+      const result = await this.pipeline.enqueueScored(scored, maxDeals);
       this.logger.log(
         `Scheduler tick legacy - source=${sourceId} scored=${scored.length} ` +
-          `sent=${dispatch.sent} took=${ms}ms`,
+          `enqueued=${result.enqueued} targets=${result.targets} took=${ms}ms`,
       );
     } catch (err) {
       const ms = Date.now() - startedAt;

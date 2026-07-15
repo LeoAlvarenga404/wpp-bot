@@ -1,12 +1,16 @@
 // src/pipeline/pipeline.service.ts
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Queue } from 'bullmq';
 import { CurationService } from '../curation/curation.service';
 import { DealScoreService } from '../deal-score/deal-score.service';
 import type { ScoredDeal } from '../deal-score/types';
 import { DedupService } from '../dedup/dedup.service';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
+import { CountersService } from '../metrics/counters.service';
+import { SEND_DEAL_QUEUE_TOKEN } from '../queue/queue.module';
+import type { SendDealJob } from '../queue/queue.types';
 import {
   EnrichedDeal,
   keyToString,
@@ -14,6 +18,7 @@ import {
   SourceId,
 } from '../sources/source.port';
 import { SourceRegistry } from '../sources/source-registry.service';
+import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
 import { FormatterService } from './formatter.service';
 
@@ -30,6 +35,9 @@ export class PipelineService {
     private readonly curation: CurationService,
     private readonly registry: SourceRegistry,
     private readonly dealScore: DealScoreService,
+    private readonly targets: TargetsService,
+    private readonly counters: CountersService,
+    @Inject(SEND_DEAL_QUEUE_TOKEN) private readonly sendQueue: Queue<SendDealJob>,
   ) {}
 
   async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
@@ -73,7 +81,10 @@ export class PipelineService {
     for (const raw of rawDeals) {
       const keyStr = keyToString(raw.key);
       await this.curation.record(keyStr, raw.priceCents);
-      if (await this.dedup.wasRecentlyPosted(keyStr, windowDays)) continue;
+      if (await this.dedup.wasRecentlyPosted(keyStr, windowDays)) {
+        this.counters.dedupSkip.inc();
+        continue;
+      }
       if (this.curation.isFakeDiscount(keyStr, raw.priceCents)) continue;
       survivors.push(raw);
     }
@@ -109,41 +120,67 @@ export class PipelineService {
     return passing;
   }
 
-  async dispatchScored(
+  /**
+   * Enqueue the top `max` scored deals for every active target. One job per
+   * (deal × target) so a multi-broadcast publish doesn't block on the
+   * slowest send. The BullMQ worker (`SendDealWorker`) handles retries,
+   * dedup marking, and rate-limit backoff.
+   *
+   * Falls back to `WA_TARGET_JID` when the TargetsService registry is empty
+   * so single-target installs keep working without DB seeding.
+   */
+  async enqueueScored(
     scored: ScoredDeal[],
     max: number,
-  ): Promise<{ sent: number; failed: number; topScore: number | null }> {
-    const targetJid = this.config.get<string>('WA_TARGET_JID', '');
-    if (!targetJid) throw new Error('WA_TARGET_JID not set in .env');
-    if (!this.wa.isReady()) throw new Error('WhatsApp not ready - scan QR first');
-
+  ): Promise<{
+    enqueued: number;
+    targets: number;
+    topScore: number | null;
+  }> {
     const sorted = [...scored].sort((a, b) => b.score - a.score).slice(0, max);
-    let sent = 0;
-    let failed = 0;
-    let topScore: number | null = null;
-
-    for (const sd of sorted) {
-      if (topScore === null) topScore = sd.score;
-      const keyStr = keyToString(sd.deal.key);
-      try {
-        const { caption, imageUrl } = await this.formatter.formatScored(sd);
-        if (imageUrl) await this.wa.sendImage(targetJid, imageUrl, caption);
-        else await this.wa.sendText(targetJid, caption);
-        await this.dedup.markPosted(keyStr);
-        this.logger.log(
-          `dispatch ${keyStr} -> WA sent ok (level=${sd.level}, score=${sd.score})`,
-        );
-        sent++;
-      } catch (err) {
-        failed++;
-        this.logger.error(
-          `dispatch ${keyStr} failed: ${(err as Error).message}`,
-        );
-      }
-      await this.sleep(2000);
+    if (sorted.length === 0) {
+      return { enqueued: 0, targets: 0, topScore: null };
     }
 
-    return { sent, failed, topScore };
+    let jids = await this.targets.getActiveJids();
+    if (jids.length === 0) {
+      const fallback = this.config.get<string>('WA_TARGET_JID', '');
+      if (fallback) jids = [fallback];
+    }
+    if (jids.length === 0) {
+      throw new Error(
+        'No active targets and WA_TARGET_JID unset — nothing to publish',
+      );
+    }
+
+    let enqueued = 0;
+    let topScore: number | null = null;
+    for (const sd of sorted) {
+      if (topScore === null) topScore = sd.score;
+      const catalogKey = keyToString(sd.deal.key);
+      for (const targetJid of jids) {
+        // jobId = `<key>:<jid>` so re-enqueues for the same deal+target
+        // coalesce while waiting in the queue.
+        const jobId = `${catalogKey}:${targetJid}`;
+        try {
+          await this.sendQueue.add(
+            'send-deal',
+            { targetJid, catalogKey, scored: sd },
+            { jobId },
+          );
+          enqueued++;
+        } catch (err) {
+          this.logger.error(
+            `enqueue ${jobId} failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+
+    this.logger.log(
+      `enqueueScored: deals=${sorted.length} targets=${jids.length} enqueued=${enqueued}`,
+    );
+    return { enqueued, targets: jids.length, topScore };
   }
 
   private prescore(raw: RawDeal): number {
@@ -170,12 +207,12 @@ export class PipelineService {
     const max = opts?.max ?? Number(this.config.get<string>('MAX_DEALS_PER_RUN', '3'));
 
     const scored = await this.collectScored(sourceId);
-    const dispatch = await this.dispatchScored(scored, max);
+    const result = await this.enqueueScored(scored, max);
     return {
-      sent: dispatch.sent,
-      failed: dispatch.failed,
+      enqueued: result.enqueued,
+      targets: result.targets,
       scored: scored.length,
-      topScore: dispatch.topScore,
+      topScore: result.topScore,
       sourceId,
     };
   }
@@ -210,7 +247,4 @@ export class PipelineService {
     };
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((r) => setTimeout(r, ms));
-  }
 }
