@@ -313,6 +313,55 @@ describe('PipelineService.enqueueScored', () => {
     );
   });
 
+  it('bundles wa deals into a send-digest job; telegram stays 1 job per deal', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      { jid: '-100555', name: 'tg', active: true, channel: 'telegram' },
+    ]);
+    (d.pipeline as any).config = {
+      get: (k: string, def?: string) => {
+        if (k === 'MAX_DEALS_PER_RUN_WA') return '3';
+        if (k === 'MAX_DEALS_PER_RUN_TELEGRAM') return '3';
+        if (k === 'WA_DIGEST_SIZE') return '4';
+        return def;
+      },
+    };
+    const scored = [90, 85, 80].map((s, i) => ({
+      ...scoredFixture(),
+      score: s,
+      deal: enrichedFor(rawFor(`MLB${i + 1}`)),
+    }));
+
+    const result = await d.pipeline.enqueueScored(scored);
+
+    const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+    const digestCalls = calls.filter(([name]) => name === 'send-digest');
+    const dealCalls = calls.filter(([name]) => name === 'send-deal');
+    expect(digestCalls).toHaveLength(1); // 3 deals num digest só p/ wa
+    expect(digestCalls[0][1].deals).toHaveLength(3);
+    expect(digestCalls[0][1].digestId).toEqual(expect.any(String));
+    expect(dealCalls).toHaveLength(3); // telegram individual
+    expect(result.enqueued).toBe(4);
+    expect(d.gate.recordPosted).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps single wa deal as a plain send-deal job (no digest of one)', async () => {
+    const d = makeDeps({ rawDeals: [] });
+    d.targets.getActiveTargets.mockResolvedValue([
+      { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+    ]);
+    (d.pipeline as any).config = {
+      get: (k: string, def?: string) =>
+        k === 'WA_DIGEST_SIZE' ? '4' : def,
+    };
+
+    await d.pipeline.enqueueScored([scoredFixture()]);
+
+    const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+    expect(calls[0][0]).toBe('send-deal');
+  });
+
   it('falls back to WA_TARGET_JID as a wa-channel target', async () => {
     const d = makeDeps({ rawDeals: [] });
     d.targets.getActiveTargets.mockResolvedValue([]);

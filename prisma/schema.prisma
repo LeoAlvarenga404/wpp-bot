@@ -55,6 +55,7 @@ model SentMessage {
   targetJid String
   caption   String
   variant   String?
+  digestId  String?
   sentAt    DateTime @default(now())
 
   @@index([catalogId, sentAt])
