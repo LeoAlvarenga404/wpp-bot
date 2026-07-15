@@ -42,7 +42,12 @@ export class PrismaTargetsRepo implements TargetsRepo {
   async upsert(t: WaTarget): Promise<WaTarget> {
     const r = await (this.prisma as any).waTarget.upsert({
       where: { jid: t.jid },
-      create: { jid: t.jid, name: t.name, active: t.active, channel: t.channel },
+      create: {
+        jid: t.jid,
+        name: t.name,
+        active: t.active,
+        channel: t.channel,
+      },
       update: { name: t.name, active: t.active, channel: t.channel },
     });
     return this.toDomain(r);

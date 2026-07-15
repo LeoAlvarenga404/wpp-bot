@@ -32,7 +32,7 @@ function makeDeps() {
 
 function makeWorker(d: ReturnType<typeof makeDeps>): SendDealWorker {
   return new SendDealWorker(
-    {} as any,
+    {},
     d.registry as any,
     d.formatter as any,
     d.dedup as any,
@@ -89,7 +89,9 @@ describe('SendDealWorker.process', () => {
     d.prisma.sentMessage.create.mockRejectedValue(new Error('db down'));
     const worker = makeWorker(d);
 
-    await expect((worker as any).process(makeJob('telegram'))).resolves.toBeUndefined();
+    await expect(
+      (worker as any).process(makeJob('telegram')),
+    ).resolves.toBeUndefined();
     expect(d.publisher.publish).toHaveBeenCalled();
   });
 });

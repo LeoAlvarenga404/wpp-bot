@@ -224,7 +224,7 @@ describe('PipelineService.collectAllScored', () => {
 describe('PipelineService.enqueueScored', () => {
   function scoredFixture(): ScoredDeal {
     return {
-      deal: enrichedFor(rawFor('MLB1')) as any,
+      deal: enrichedFor(rawFor('MLB1')),
       score: 90,
       rawScore: 90,
       level: 'top',
