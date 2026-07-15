@@ -101,9 +101,12 @@ model WaCounter {
 }
 
 model WaTarget {
-  jid    String  @id
-  name   String?
-  active Boolean @default(true)
+  jid     String  @id
+  name    String?
+  active  Boolean @default(true)
+  // Publisher channel: 'wa' | 'telegram'. String (not enum) so adding a
+  // channel doesn't require a schema migration.
+  channel String  @default("wa")
 }
 
 model WaOptout {

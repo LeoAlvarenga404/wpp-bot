@@ -11,10 +11,14 @@ import type { TargetsRepo } from './targets.repo';
  * from the legacy ./data/wa-targets.json (if present) and from
  * `WA_TARGET_JID` (if set and not already registered).
  */
+export type Channel = 'wa' | 'telegram';
+
 export interface WaTarget {
+  /** WA JID or Telegram chat_id (e.g. "@meucanal" or "-1001234567890"). */
   jid: string;
   name: string;
   active: boolean;
+  channel: Channel;
 }
 
 const DEFAULT_JSON_FILE = './data/wa-targets.json';
@@ -38,14 +42,22 @@ export class TargetsService implements OnModuleInit {
     return this.repo.findAll();
   }
 
-  async getActiveJids(): Promise<string[]> {
+  async getActiveTargets(): Promise<WaTarget[]> {
     const all = await this.repo.findAll();
-    return all.filter((t) => t.active).map((t) => t.jid);
+    return all.filter((t) => t.active);
   }
 
-  async add(jid: string, name: string): Promise<WaTarget> {
+  async getActiveJids(): Promise<string[]> {
+    return (await this.getActiveTargets()).map((t) => t.jid);
+  }
+
+  async add(
+    jid: string,
+    name: string,
+    channel: Channel = 'wa',
+  ): Promise<WaTarget> {
     if (!jid) throw new Error('jid required');
-    return this.repo.upsert({ jid, name: name || jid, active: true });
+    return this.repo.upsert({ jid, name: name || jid, active: true, channel });
   }
 
   async remove(jid: string): Promise<boolean> {
@@ -61,15 +73,26 @@ export class TargetsService implements OnModuleInit {
 
   private async seedFromEnv(): Promise<void> {
     const seed = this.config.get<string>('WA_TARGET_JID', '');
-    if (!seed) return;
-    const existing = await this.repo.findOne(seed);
-    if (existing) return;
-    await this.repo.upsert({
-      jid: seed,
-      name: 'env:WA_TARGET_JID',
-      active: true,
-    });
-    this.logger.log(`Seeded target from env: ${seed}`);
+    if (seed && !(await this.repo.findOne(seed))) {
+      await this.repo.upsert({
+        jid: seed,
+        name: 'env:WA_TARGET_JID',
+        active: true,
+        channel: 'wa',
+      });
+      this.logger.log(`Seeded target from env: ${seed}`);
+    }
+
+    const tg = this.config.get<string>('TELEGRAM_CHAT_ID', '');
+    if (tg && !(await this.repo.findOne(tg))) {
+      await this.repo.upsert({
+        jid: tg,
+        name: 'env:TELEGRAM_CHAT_ID',
+        active: true,
+        channel: 'telegram',
+      });
+      this.logger.log(`Seeded telegram target from env: ${tg}`);
+    }
   }
 
   private async maybeBackfillFromJson(): Promise<void> {
@@ -111,6 +134,8 @@ export class TargetsService implements OnModuleInit {
         jid: e.jid,
         name: typeof e.name === 'string' && e.name ? e.name : e.jid,
         active: e.active !== false,
+        // Legacy JSON predates multi-channel — always WhatsApp.
+        channel: 'wa',
       });
     }
     if (targets.length === 0) return;

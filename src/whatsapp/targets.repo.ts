@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../db/prisma.service';
+import type { Channel } from './targets.service';
 import { WaTarget } from './targets.service';
 
 export const TARGETS_REPO = Symbol('TARGETS_REPO');
@@ -17,29 +18,34 @@ export interface TargetsRepo {
 export class PrismaTargetsRepo implements TargetsRepo {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(): Promise<WaTarget[]> {
-    const rows = await (this.prisma as any).waTarget.findMany();
-    return rows.map((r: any) => ({
+  private toDomain(r: any): WaTarget {
+    return {
       jid: r.jid,
       name: r.name ?? r.jid,
       active: r.active,
-    }));
+      channel: (r.channel ?? 'wa') as Channel,
+    };
+  }
+
+  async findAll(): Promise<WaTarget[]> {
+    const rows = await (this.prisma as any).waTarget.findMany();
+    return rows.map((r: any) => this.toDomain(r));
   }
 
   async findOne(jid: string): Promise<WaTarget | null> {
     const r = await (this.prisma as any).waTarget.findUnique({
       where: { jid },
     });
-    return r ? { jid: r.jid, name: r.name ?? r.jid, active: r.active } : null;
+    return r ? this.toDomain(r) : null;
   }
 
   async upsert(t: WaTarget): Promise<WaTarget> {
     const r = await (this.prisma as any).waTarget.upsert({
       where: { jid: t.jid },
-      create: { jid: t.jid, name: t.name, active: t.active },
-      update: { name: t.name, active: t.active },
+      create: { jid: t.jid, name: t.name, active: t.active, channel: t.channel },
+      update: { name: t.name, active: t.active, channel: t.channel },
     });
-    return { jid: r.jid, name: r.name ?? r.jid, active: r.active };
+    return this.toDomain(r);
   }
 
   async delete(jid: string): Promise<boolean> {
