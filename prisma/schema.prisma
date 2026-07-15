@@ -54,9 +54,33 @@ model SentMessage {
   catalogId String
   targetJid String
   caption   String
+  variant   String?
   sentAt    DateTime @default(now())
 
   @@index([catalogId, sentAt])
+}
+
+// Curation decision audit (Fase 2). One row per (catalogId, stage, day) —
+// repeated rejections on the */1 cron only bump `count`. stage/outcome are
+// strings, not enums, so a new stage doesn't require a migration (same
+// rationale as WaTarget.channel). No FK to Product — see PriceHistory note.
+model CurationDecision {
+  id           BigInt   @id @default(autoincrement())
+  catalogId    String
+  stage        String
+  outcome      String
+  day          String
+  count        Int      @default(1)
+  score        Int?
+  priceCents   Int?
+  reasons      Json?
+  judgeVerdict Json?
+  variant      String?
+  firstAt      DateTime @default(now())
+  lastAt       DateTime @updatedAt
+
+  @@unique([catalogId, stage, day])
+  @@index([day, stage])
 }
 
 // Cache of long-URL → short-URL pairs resolved by the Playwright affiliate
