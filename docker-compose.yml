@@ -30,6 +30,9 @@ services:
     volumes:
       - ./auth_info:/app/auth_info
       - ./data:/app/data
+      # Editable headline copy (persona.md + copy.json). Host edits + a
+      # `docker compose restart app` reload the copy without a rebuild.
+      - ./config:/app/config
     depends_on:
       postgres:
         condition: service_healthy

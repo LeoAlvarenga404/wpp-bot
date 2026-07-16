@@ -68,12 +68,13 @@ describe('ofertasTemplate', () => {
     expect(lines[0]).toBe('#MercadoLivre');
     expect(out).toContain('QUE PREÇO É ESSE 🔥');
     expect(out).toContain('➡️ Echo Dot 5');
-    expect(out).toContain('✅ R$ 87 à vista');
+    expect(out).toContain('❌ De ~R$ 200~');
+    expect(out).toContain('✅ Por R$ 87 à vista');
     expect(out).toContain('🛒 Link: https://meli.la/ABC');
     expect(out).not.toMatch(/Link de afiliado/);
   });
 
-  it('shows "NO PIX" with the pix price when priceView has one', () => {
+  it('shows "no PIX" with the pix price when priceView has one', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 10000 }),
       link: 'l',
@@ -87,8 +88,51 @@ describe('ofertasTemplate', () => {
         scrapedAt: '2026-07-15T20:00:00.000Z',
       },
     });
-    expect(out).toContain('✅ R$ 87 NO PIX');
+    expect(out).toContain('✅ Por R$ 87 no PIX');
+    expect(out).toContain('(-50%)');
     expect(out).not.toContain('à vista');
+  });
+
+  it('renders the struck "De" full price only when it beats the promo', () => {
+    const withDe = ofertasTemplate({
+      sd: makeScored({ priceCents: 8700 }), // original 20000 > promo
+      link: 'l',
+      hook: 'h',
+    });
+    expect(withDe).toContain('❌ De ~R$ 200~');
+
+    const noDe = ofertasTemplate({
+      sd: makeScored({ priceCents: 8700 }),
+      link: 'l',
+      hook: 'h',
+      priceView: {
+        priceCents: 8700,
+        originalPriceCents: 8700, // equal → no fake "De"
+        discountPercent: null,
+        pixPriceCents: null,
+        installments: null,
+        scrapedAt: '2026-07-15T20:00:00.000Z',
+      },
+    });
+    expect(noDe).not.toContain('❌ De');
+  });
+
+  it('renders the card installment line from priceView', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ priceCents: 100000 }),
+      link: 'l',
+      hook: 'h',
+      priceView: {
+        priceCents: 100000,
+        originalPriceCents: 150000,
+        discountPercent: 33,
+        pixPriceCents: 95000,
+        installments: { count: 10, amountCents: 10000, noInterest: true },
+        scrapedAt: '2026-07-15T20:00:00.000Z',
+      },
+    });
+    expect(out).toContain('✅ Por R$ 950 no PIX');
+    expect(out).toContain('💳 ou 10x de R$ 100 sem juros');
   });
 
   it('renders ⚡ FULL only when signals.isFull', () => {
@@ -178,6 +222,6 @@ describe('ofertasTemplate', () => {
       link: 'l',
       hook: 'h',
     });
-    expect(out).toContain('✅ R$ 4.846 à vista');
+    expect(out).toContain('✅ Por R$ 4.846 à vista');
   });
 });

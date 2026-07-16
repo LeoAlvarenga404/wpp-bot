@@ -57,6 +57,11 @@ COPY --from=builder --chown=node:node /app/package.json ./package.json
 # entrypoint) can find migrations and the datasource block.
 COPY --from=builder --chown=node:node /app/prisma ./prisma
 
+# Editable copy for the headline generator (persona.md + copy.json). Baked in
+# so the app has sane content even without a mount; compose bind-mounts
+# ./config over this so host edits win without a rebuild.
+COPY --chown=node:node config ./config
+
 # Install Chromium + its system deps. Run as root, then chown the cache so
 # the non-root `node` user can read the browser binary.
 RUN npx playwright install --with-deps chromium \

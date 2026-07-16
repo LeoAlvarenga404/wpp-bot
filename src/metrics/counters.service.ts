@@ -21,6 +21,7 @@ export class CountersService {
   public readonly judgeApprove: Counter<string>;
   public readonly judgeReject: Counter<string>;
   public readonly judgeError: Counter<string>;
+  public readonly headlineFrameUsed: Counter<string>;
   public readonly baileysConnected: Gauge<string>;
 
   constructor() {
@@ -89,6 +90,13 @@ export class CountersService {
     this.judgeError = new Counter({
       name: 'curation_judge_error_total',
       help: 'Judge calls that failed (fail-closed: deal not posted)',
+      registers: [this.register],
+    });
+
+    this.headlineFrameUsed = new Counter({
+      name: 'headline_frame_used_total',
+      help: 'Headlines generated per LLM style frame (observability for weight tuning)',
+      labelNames: ['frame'],
       registers: [this.register],
     });
 

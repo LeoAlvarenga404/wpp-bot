@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DealItem } from '../mercado-livre/types';
+import { CountersService } from '../metrics/counters.service';
 import { HeadlineCacheService } from './headline-cache.service';
-import { HEADLINE_FRAMES, HeadlineFrame, pickFrame } from './headline-frames';
+import { HeadlineConfigService } from './headline-config.service';
+import { HeadlineCopyConfig } from './headline-copy.defaults';
+import { HeadlineFrame, pickFrame } from './headline-frames';
 import { HeadlineGenerator } from './headline.port';
 import { NoopHeadlineAdapter } from './noop-headline.adapter';
 
@@ -10,17 +13,6 @@ interface ChatResponse {
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
-
-const FORBIDDEN_WORDS = [
-  'OFERTA',
-  'OFERTÃO',
-  'PROMOÇÃO',
-  'IMPERDÍVEL',
-  'IMPERDIVEL',
-  'DESCONTÃO',
-  'DESCONTAO',
-  'ALERTA',
-];
 
 @Injectable()
 export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
@@ -39,6 +31,8 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
     private readonly config: ConfigService,
     private readonly cache: HeadlineCacheService,
     private readonly fallback: NoopHeadlineAdapter,
+    private readonly copy: HeadlineConfigService,
+    private readonly counters: CountersService,
   ) {
     this.apiKey = this.config.get<string>('DEEPSEEK_API_KEY') ?? '';
     this.model = this.config.get<string>('HEADLINE_MODEL') ?? 'deepseek-chat';
@@ -72,19 +66,22 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
       return this.fallback.generate(item);
     }
 
-    const frame = pickFrame();
+    const cfg = this.copy.get();
+    const frame = pickFrame(cfg.frames);
+    this.counters.headlineFrameUsed.inc({ frame: frame.name });
+
     try {
-      const headline = await this.callDeepSeek(item, frame);
-      let clean = this.sanitize(headline);
-      if (!clean) throw new Error('empty headline');
-      if (this.hasForbiddenWord(clean)) {
+      let clean = this.sanitize(await this.callDeepSeek(item, frame, cfg));
+      let issue = this.qualityIssue(clean, item, cfg);
+      if (issue) {
         this.logger.warn(
-          `headline contained forbidden word, retrying once: "${clean}"`,
+          `headline rejected (${issue}), retrying once: "${clean}"`,
         );
-        const retry = await this.callDeepSeek(item, frame);
-        clean = this.sanitize(retry);
+        clean = this.sanitize(await this.callDeepSeek(item, frame, cfg));
+        issue = this.qualityIssue(clean, item, cfg);
       }
-      if (!clean) throw new Error('empty headline after retry');
+      if (issue) throw new Error(`quality gate failed: ${issue}`);
+
       await this.cache.set(item.catalogId, clean);
       return clean;
     } catch (err) {
@@ -97,8 +94,9 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
   private async callDeepSeek(
     item: DealItem,
     frame: HeadlineFrame,
+    cfg: HeadlineCopyConfig,
   ): Promise<string> {
-    const userPrompt = this.buildPrompt(item, frame);
+    const userPrompt = this.buildPrompt(item, frame, cfg);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -114,7 +112,7 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
         body: JSON.stringify({
           model: this.model,
           messages: [
-            { role: 'system', content: this.systemPrompt() },
+            { role: 'system', content: cfg.persona },
             { role: 'user', content: userPrompt },
           ],
           temperature: this.temperature,
@@ -141,19 +139,11 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
     return content;
   }
 
-  private systemPrompt(): string {
-    return [
-      'Você é admin veterano de um grupo de WhatsApp de ofertas no Brasil.',
-      'Idade ~30, fala como cria da quebrada/zona norte de SP: gíria,',
-      'humor seco, intimidade com a galera. NÃO é vendedor corporativo.',
-      'NÃO usa palavras de marketing chato como "OFERTA", "OFERTÃO",',
-      '"PROMOÇÃO", "IMPERDÍVEL", "DESCONTÃO", "ALERTA".',
-      'Cada hook que escreve soa como mensagem real de um amigo zoando.',
-      'Resposta SEMPRE em uma linha só, CAPS LOCK, com 2-3 emojis no fim.',
-    ].join(' ');
-  }
-
-  private buildPrompt(item: DealItem, frame: HeadlineFrame): string {
+  private buildPrompt(
+    item: DealItem,
+    frame: HeadlineFrame,
+    cfg: HeadlineCopyConfig,
+  ): string {
     const priceBRL = item.price.toLocaleString('pt-BR', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
@@ -162,12 +152,13 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     });
-    const totalFrames = HEADLINE_FRAMES.length;
-    const otherFrames = HEADLINE_FRAMES.filter((f) => f.name !== frame.name)
+    const otherFrames = cfg.frames
+      .filter((f) => f.name !== frame.name)
       .map((f) => f.name)
       .join(', ');
+    const forbiddenList = cfg.forbiddenWords.join(', ');
 
-    return [
+    const lines = [
       'TAREFA: criar UMA frase de chamada (hook) pra anunciar esse produto',
       'num grupo de WhatsApp. Vai aparecer ANTES do bloco de preço/link,',
       'então NÃO repita preço/link/cupom — só vibra.',
@@ -177,25 +168,46 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
       `PREÇO ANTIGO: R$ ${originalBRL}`,
       `DESCONTO: ${item.discountPercent}% OFF`,
       '',
-      `ESTILO OBRIGATÓRIO (1 de ${totalFrames}): ${frame.name}`,
+      `ESTILO OBRIGATÓRIO (1 de ${cfg.frames.length}): ${frame.name}`,
       `Descrição do estilo: ${frame.guide}`,
       '',
       'Exemplos APENAS desse estilo (siga exatamente essa estrutura):',
       ...frame.examples.map((e) => `- ${e}`),
+    ];
+
+    if (frame.avoid?.length) {
+      lines.push(
+        '',
+        `NÃO faça assim nesse estilo "${frame.name}":`,
+        ...frame.avoid.map((e) => `- ${e}`),
+      );
+    }
+
+    if (cfg.antiExamples.length) {
+      lines.push(
+        '',
+        'NUNCA escreva nada parecido com isso (erros comuns):',
+        ...cfg.antiExamples.map((e) => `- ${e}`),
+      );
+    }
+
+    lines.push(
       '',
       'RESTRIÇÕES:',
       `- USE o estilo "${frame.name}". NÃO use os outros estilos (${otherFrames}).`,
       '- TUDO em CAPS LOCK.',
       '- Termina com 2 ou 3 emojis (😍 / 🔥 / 😱 / 💸 / 🤯 / 💪 / 👀 / ☕ / 🥩 / 🎧 / 📱 etc).',
       '- 4 a 12 palavras. Máximo 70 caracteres.',
-      '- NÃO escreva: OFERTA, OFERTÃO, PROMOÇÃO, IMPERDÍVEL, DESCONTÃO, ALERTA.',
+      `- NÃO escreva: ${forbiddenList}.`,
       '- NÃO use aspas, hashtag (#), link, markdown (* ou ~), nem dois-pontos no começo.',
       '- NÃO inclua preço nem cupom dentro do hook (a não ser que o estilo seja PRECO_CONTO).',
       '- NÃO copie o título inteiro do produto. Resume na vibe.',
       '- Refira-se ao produto pela categoria/uso, não pela marca completa.',
       '',
       'Devolve APENAS a frase. Sem prefixo, sem aspas, sem explicação.',
-    ].join('\n');
+    );
+
+    return lines.join('\n');
   }
 
   private sanitize(raw: string): string {
@@ -204,12 +216,67 @@ export class DeepSeekHeadlineAdapter implements HeadlineGenerator {
     s = s.replace(/^[-*•]\s*/, '').trim();
     s = s.replace(/^(headline|hook|frase|resposta)\s*:\s*/i, '').trim();
     s = s.split('\n')[0].trim();
+    s = s.replace(/^:+\s*/, '').trim();
     if (s.length > 100) s = s.slice(0, 100).trim();
     return s;
   }
 
-  private hasForbiddenWord(s: string): boolean {
+  /**
+   * Gate determinístico de qualidade (#5). Grátis — sem LLM extra. Devolve o
+   * motivo da reprova (string) ou null quando o hook passa. Cobre os modos de
+   * falha checáveis: vazio, palavra proibida, sem emoji, tamanho fora, char
+   * banido e cópia do título do produto.
+   */
+  private qualityIssue(
+    clean: string,
+    item: DealItem,
+    cfg: HeadlineCopyConfig,
+  ): string | null {
+    if (!clean) return 'empty';
+
+    const forbidden = this.forbiddenHit(clean, cfg.forbiddenWords);
+    if (forbidden) return `forbidden:${forbidden}`;
+
+    if (!/\p{Extended_Pictographic}/u.test(clean)) return 'no-emoji';
+    if (/[#*~`]/.test(clean)) return 'banned-char';
+    if (/https?:\/\//i.test(clean)) return 'has-link';
+
+    const words = clean.trim().split(/\s+/);
+    if (words.length < 3) return 'too-short';
+    if (clean.length > 90) return 'too-long';
+
+    if (this.copiesTitle(clean, item.title)) return 'title-copy';
+
+    return null;
+  }
+
+  private forbiddenHit(s: string, words: string[]): string | null {
     const upper = s.toUpperCase();
-    return FORBIDDEN_WORDS.some((w) => upper.includes(w));
+    return words.find((w) => upper.includes(w.toUpperCase())) ?? null;
+  }
+
+  /**
+   * Detecta hook que só repete o título do produto. Normaliza (sem acento,
+   * minúsculo, só alfanumérico) e mede a fração de palavras do hook que também
+   * estão no título. >=60% de sobreposição com >=4 palavras = cópia.
+   */
+  private copiesTitle(hook: string, title: string): boolean {
+    const titleSet = new Set(this.tokens(title, 3));
+    if (titleSet.size === 0) return false;
+    const hookWords = this.tokens(hook, 3);
+    if (hookWords.length < 4) return false;
+    const matched = hookWords.filter((w) => titleSet.has(w)).length;
+    return matched / hookWords.length >= 0.6;
+  }
+
+  private tokens(s: string, minLen: number): string[] {
+    return s
+      .normalize('NFD')
+      .replace(/[0300-036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= minLen);
   }
 }

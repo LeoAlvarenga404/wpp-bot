@@ -9,6 +9,12 @@ export interface HeadlineFrame {
   weight: number;
   guide: string;
   examples: string[];
+  /**
+   * Contra-exemplos: hooks que parecem certos mas violam o estilo/persona.
+   * Ancorar o modelo no "NÃO faça assim" reduz erro mais que só mostrar
+   * exemplos bons. Opcional por frame.
+   */
+  avoid?: string[];
 }
 
 export const HEADLINE_FRAMES: HeadlineFrame[] = [
@@ -25,6 +31,12 @@ export const HEADLINE_FRAMES: HeadlineFrame[] = [
       'ROLE NA PRAIA COM ESSE SOM AÍ 🌊🎵🔥',
       'CAFÉ DA MANHÃ DE REI COM ESSA MARAVILHA ☕☕☕',
     ],
+    avoid: [
+      // copia o título inteiro em vez de pintar a cena
+      'AIR FRYER MONDIAL 5L PRETA 127V PRA SUA COZINHA 🔥',
+      // frio/corporativo, sem cena do dia-a-dia
+      'ADQUIRA JÁ ESSE PRODUTO DE QUALIDADE 😊',
+    ],
   },
   {
     name: 'IMPERATIVO_GALERA',
@@ -37,6 +49,12 @@ export const HEADLINE_FRAMES: HeadlineFrame[] = [
       'BORA TROCAR O VELHINHO, MEU CHAPA!! 📱🔥🔥',
       'CORRE QUE TÁ POR UM PRECINHO BÁSICO 🏃‍♂️💨💨',
       'FECHA ESSA AÍ ANTES QUE ACABE! ⚡⚡⚡',
+    ],
+    avoid: [
+      // manda clicar no link (spam) — o link vem depois, no bloco de preço
+      'CLICA NO LINK AGORA E APROVEITE 🔥🔥🔥',
+      // marketing chato com palavra proibida
+      'CORRE PRA ESSA OFERTA IMPERDÍVEL ⚡',
     ],
   },
   {
@@ -172,12 +190,16 @@ export const HEADLINE_FRAMES: HeadlineFrame[] = [
   },
 ];
 
-export function pickFrame(): HeadlineFrame {
-  const total = HEADLINE_FRAMES.reduce((s, f) => s + f.weight, 0);
+export function pickFrame(
+  frames: HeadlineFrame[] = HEADLINE_FRAMES,
+): HeadlineFrame {
+  const pool = frames.length ? frames : HEADLINE_FRAMES;
+  const total = pool.reduce((s, f) => s + Math.max(0, f.weight), 0);
+  if (total <= 0) return pool[0];
   let roll = Math.random() * total;
-  for (const f of HEADLINE_FRAMES) {
-    roll -= f.weight;
+  for (const f of pool) {
+    roll -= Math.max(0, f.weight);
     if (roll <= 0) return f;
   }
-  return HEADLINE_FRAMES[0];
+  return pool[0];
 }

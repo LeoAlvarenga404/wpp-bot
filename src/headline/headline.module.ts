@@ -1,14 +1,18 @@
 import { Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MetricsModule } from '../metrics/metrics.module';
 import { HeadlineCacheService } from './headline-cache.service';
+import { HeadlineConfigService } from './headline-config.service';
 import { HEADLINE_GENERATOR } from './headline.port';
 import type { HeadlineGenerator } from './headline.port';
 import { DeepSeekHeadlineAdapter } from './deepseek-headline.adapter';
 import { NoopHeadlineAdapter } from './noop-headline.adapter';
 
 @Module({
+  imports: [MetricsModule],
   providers: [
     HeadlineCacheService,
+    HeadlineConfigService,
     NoopHeadlineAdapter,
     DeepSeekHeadlineAdapter,
     {
