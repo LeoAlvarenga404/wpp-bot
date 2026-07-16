@@ -87,7 +87,9 @@ describe('FormatterService.formatDigest (ofertas clone)', () => {
       { scored: makeScored('MLB1', 'top'), variant: 'A' as const },
     ]);
 
-    expect(caption).toContain('🛒 Link do produto: https://s.shopee.com.br/aff77');
+    expect(caption).toContain(
+      '🛒 Link do produto: https://s.shopee.com.br/aff77',
+    );
     expect(caption).toContain('🛒 Link: aff:https://ml/MLB1');
     expect(affiliate.resolve).toHaveBeenCalledTimes(1); // só o deal ML
   });

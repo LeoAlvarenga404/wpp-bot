@@ -142,13 +142,25 @@ describe('ofertasTemplate', () => {
 
   it('picks hook emoji by level', () => {
     expect(
-      ofertasTemplate({ sd: makeScored({ level: 'good' }), link: 'l', hook: 'h' }),
+      ofertasTemplate({
+        sd: makeScored({ level: 'good' }),
+        link: 'l',
+        hook: 'h',
+      }),
     ).toContain('H 🔥');
     expect(
-      ofertasTemplate({ sd: makeScored({ level: 'top' }), link: 'l', hook: 'h' }),
+      ofertasTemplate({
+        sd: makeScored({ level: 'top' }),
+        link: 'l',
+        hook: 'h',
+      }),
     ).toContain('H 🔥🔥');
     expect(
-      ofertasTemplate({ sd: makeScored({ level: 'super' }), link: 'l', hook: 'h' }),
+      ofertasTemplate({
+        sd: makeScored({ level: 'super' }),
+        link: 'l',
+        hook: 'h',
+      }),
     ).toContain('H 🚨');
   });
 

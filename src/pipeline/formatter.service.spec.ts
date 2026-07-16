@@ -188,7 +188,10 @@ function makeScored(level: ScoredDeal['level']): ScoredDeal {
 
 describe('FormatterService.formatScored (ofertas clone)', () => {
   it('emits hashtag, uppercased hook, title, price and link — no disclaimer', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('que preço'));
+    const svc = new FormatterService(
+      makeAffiliate(),
+      makeHeadline('que preço'),
+    );
     const { caption } = await svc.formatScored(makeScored('good'));
     expect(caption.split('\n')[0]).toBe('#MercadoLivre');
     expect(caption).toContain('QUE PREÇO 🔥');
