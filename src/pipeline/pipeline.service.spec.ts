@@ -190,6 +190,53 @@ describe('PipelineService.collectScored(sourceId)', () => {
     expect(d.curation.record).toHaveBeenCalledWith('ml:MLB2', 10000);
   });
 
+  it('screens each raw BEFORE recording it: same-tick observation cannot shift the median used by the screen', async () => {
+    // Behavioral lock for the cold-start contamination bug: with an empty
+    // history, recording the promo price first made median == promo price,
+    // so isFakeDiscount rejected the very deal that created the observation.
+    const d = makeDeps({ rawDeals: [rawFor('MLB1', 10000)] });
+    const store: Record<string, number[]> = {};
+    d.curation.record.mockImplementation(async (k: string, p: number) => {
+      (store[k] ??= []).push(p);
+    });
+    d.curation.isFakeDiscount.mockImplementation(
+      (k: string, priceCents: number) => {
+        const prices = store[k] ?? [];
+        if (prices.length === 0) return false; // no history -> pass
+        const sorted = [...prices].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        return priceCents >= median * 0.85;
+      },
+    );
+    d.gate.screenRaw.mockImplementation(
+      async (raw: RawDeal) =>
+        !d.curation.isFakeDiscount(
+          `${raw.key.source}:${raw.key.externalId}`,
+          raw.priceCents,
+        ),
+    );
+
+    const out = await d.pipeline.collectScored('ml');
+
+    // Would be [] if record() ran before the screen decision.
+    expect(out).toHaveLength(1);
+    // Observation still recorded (history keeps building), just after.
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB1', 10000);
+    expect(d.gate.screenRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      d.curation.record.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('still records price history for deals rejected by the screen', async () => {
+    const d = makeDeps({
+      rawDeals: [rawFor('MLB1'), rawFor('MLB2')],
+      failingId: 'MLB1',
+    });
+    await d.pipeline.collectScored('ml');
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB1', 10000);
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB2', 10000);
+  });
+
   it('skips deals already posted', async () => {
     const d = makeDeps({
       rawDeals: [rawFor('MLB1'), rawFor('MLB2')],
@@ -245,6 +292,95 @@ describe('PipelineService.collectAllScored', () => {
     const out = await d.pipeline.collectAllScored();
     expect(d.registry.getAll).toHaveBeenCalled();
     expect(out).toHaveLength(1);
+  });
+});
+
+describe('PipelineService coupon-aware scoring', () => {
+  function priceSensitiveScore(d: ReturnType<typeof makeDeps>) {
+    // Score depends on the price the scorer sees: cheap = good deal.
+    (d.dealScore.computeWithObservations as jest.Mock).mockImplementation(
+      (e: EnrichedDeal): ScoredDeal => {
+        const s = e.raw.priceCents <= 5000 ? 85 : 60;
+        return {
+          deal: e,
+          score: s,
+          rawScore: s,
+          level: s >= 75 ? 'good' : 'rejected',
+          reasons: [],
+          penalties: [],
+          factors: { discount_percent: s },
+        };
+      },
+    );
+  }
+
+  function priceCoupon(finalCents: number) {
+    return {
+      code: 'CUPOM10',
+      mode: 'PRICE' as const,
+      finalCents,
+      discountLabel: '-R$ 50',
+      minCents: null,
+      validUntil: '2026-12-31T00:00:00.000Z',
+    };
+  }
+
+  it('scores against the effective price when a PRICE coupon applies, recording coupon_boost', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1', 10000)] });
+    priceSensitiveScore(d);
+    (d.pipeline as any).coupons = {
+      resolveForDeal: jest.fn(async () => priceCoupon(5000)),
+    };
+
+    const out = await d.pipeline.collectScored('ml');
+
+    // Base price scores 60 (< MIN 75) — only the coupon makes it pass.
+    expect(out).toHaveLength(1);
+    expect(out[0].score).toBe(85);
+    expect(out[0].factors.coupon_boost).toBe(25);
+    expect(out[0].reasons.some((r) => r.code === 'coupon_boost')).toBe(true);
+    // The deal itself keeps the BASE price (history/audit/message use it).
+    expect(out[0].deal.raw.priceCents).toBe(10000);
+    // Coupon resolved with the deal's current (base) price.
+    expect(
+      ((d.pipeline as any).coupons.resolveForDeal as jest.Mock).mock
+        .calls[0][1],
+    ).toBe(10000);
+    // Price history records the BASE price only — never the couponed price.
+    expect(d.curation.record).toHaveBeenCalledWith('ml:MLB1', 10000);
+    expect(d.curation.record).not.toHaveBeenCalledWith('ml:MLB1', 5000);
+  });
+
+  it('ignores CTA-mode coupons (no final price -> no boost)', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1', 10000)] });
+    priceSensitiveScore(d);
+    (d.pipeline as any).coupons = {
+      resolveForDeal: jest.fn(async () => ({
+        ...priceCoupon(5000),
+        mode: 'CTA' as const,
+        finalCents: null,
+      })),
+    };
+
+    const out = await d.pipeline.collectScored('ml');
+
+    expect(out).toHaveLength(0); // base score 60 < MIN
+  });
+
+  it('keeps the base score when coupon resolution throws', async () => {
+    const d = makeDeps({ rawDeals: [rawFor('MLB1', 4000)] });
+    priceSensitiveScore(d);
+    (d.pipeline as any).coupons = {
+      resolveForDeal: jest.fn(async () => {
+        throw new Error('db down');
+      }),
+    };
+
+    const out = await d.pipeline.collectScored('ml');
+
+    expect(out).toHaveLength(1); // 4000 scores 85 on its own
+    expect(out[0].score).toBe(85);
+    expect(out[0].factors.coupon_boost).toBeUndefined();
   });
 });
 
@@ -450,5 +586,112 @@ describe('PipelineService.enqueueScored', () => {
     const payload = d.sendQueue.add.mock.calls[0][1];
     expect(payload.trustBadge).toBeUndefined();
     expect(d.curation.getLowestPriceBadge).not.toHaveBeenCalled();
+  });
+
+  describe('parallel price scrape', () => {
+    function scoredWithPermalink(id: string, score: number): ScoredDeal {
+      const raw = rawFor(id);
+      raw.permalink = `https://ml/${id}`;
+      return {
+        deal: enrichedFor(raw),
+        score,
+        rawScore: score,
+        level: 'top',
+        reasons: [],
+        penalties: [],
+        factors: {},
+      };
+    }
+
+    function priceViewFor(priceCents: number) {
+      return {
+        priceCents,
+        originalPriceCents: null,
+        discountPercent: null,
+        pixPriceCents: null,
+        installments: null,
+        scrapedAt: '2026-07-16T00:00:00.000Z',
+      };
+    }
+
+    function setup(concurrency: string) {
+      const d = makeDeps({ rawDeals: [] });
+      d.targets.getActiveTargets.mockResolvedValue([
+        { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      ]);
+      (d.pipeline as any).config = {
+        get: (k: string, def?: string) => {
+          if (k === 'MAX_DEALS_PER_RUN_WA') return '5';
+          if (k === 'WA_DIGEST_SIZE') return '1';
+          if (k === 'SCRAPE_CONCURRENCY') return concurrency;
+          return def;
+        },
+      };
+      return d;
+    }
+
+    it('runs at most SCRAPE_CONCURRENCY scrapes at once and keeps result-to-deal association + job order', async () => {
+      const d = setup('2');
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const scraper = {
+        scrapePriceView: jest.fn(async (permalink: string) => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+          // Derive a distinct price from the permalink's id.
+          const id = Number(permalink.slice('https://ml/MLB'.length));
+          return priceViewFor(1000 * id);
+        }),
+      };
+      (d.pipeline as any).priceScraper = scraper;
+      const scored = [90, 85, 80, 78, 76].map((s, i) =>
+        scoredWithPermalink(`MLB${i + 1}`, s),
+      );
+
+      await d.pipeline.enqueueScored(scored);
+
+      expect(scraper.scrapePriceView).toHaveBeenCalledTimes(5);
+      expect(maxInFlight).toBe(2);
+      const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+      // Jobs enqueued in score order, each carrying ITS OWN scraped view.
+      expect(calls.map(([, data]) => data.catalogKey)).toEqual([
+        'ml:MLB1',
+        'ml:MLB2',
+        'ml:MLB3',
+        'ml:MLB4',
+        'ml:MLB5',
+      ]);
+      for (let i = 0; i < 5; i++) {
+        expect(calls[i][1].priceView.priceCents).toBe(1000 * (i + 1));
+        expect(calls[i][1].scored.deal.raw.priceCents).toBe(1000 * (i + 1));
+      }
+    });
+
+    it('an individual scrape failure keeps the API price for that deal only', async () => {
+      const d = setup('2');
+      const scraper = {
+        scrapePriceView: jest.fn(async (permalink: string) => {
+          if (permalink.endsWith('MLB2')) throw new Error('timeout');
+          const id = Number(permalink.slice('https://ml/MLB'.length));
+          return priceViewFor(1000 * id);
+        }),
+      };
+      (d.pipeline as any).priceScraper = scraper;
+      const scored = [90, 85, 80].map((s, i) =>
+        scoredWithPermalink(`MLB${i + 1}`, s),
+      );
+
+      const result = await d.pipeline.enqueueScored(scored);
+
+      expect(result.enqueued).toBe(3);
+      const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+      const byKey = new Map(calls.map(([, data]) => [data.catalogKey, data]));
+      expect(byKey.get('ml:MLB1').priceView.priceCents).toBe(1000);
+      expect(byKey.get('ml:MLB2').priceView).toBeUndefined();
+      expect(byKey.get('ml:MLB2').scored.deal.raw.priceCents).toBe(10000); // API price kept
+      expect(byKey.get('ml:MLB3').priceView.priceCents).toBe(3000);
+    });
   });
 });

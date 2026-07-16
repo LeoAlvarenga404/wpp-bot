@@ -6,7 +6,11 @@ import { Queue } from 'bullmq';
 import { CurationGateService } from '../curation/curation-gate.service';
 import { CurationService } from '../curation/curation.service';
 import { DealScoreService } from '../deal-score/deal-score.service';
-import type { ScoredDeal } from '../deal-score/types';
+import type {
+  PriceAnalytics,
+  PriceObservation,
+  ScoredDeal,
+} from '../deal-score/types';
 import { MercadoLivreService } from '../mercado-livre/ml.service';
 import { SEND_DEAL_QUEUE_TOKEN } from '../queue/queue.module';
 import type { SendJob, TrustBadge } from '../queue/queue.types';
@@ -93,9 +97,15 @@ export class PipelineService {
 
     const survivors: RawDeal[] = [];
     for (const raw of rawDeals) {
-      const keyStr = keyToString(raw.key);
-      await this.curation.record(keyStr, raw.priceCents);
-      if (!(await this.gate.screenRaw(raw))) continue;
+      // Screen BEFORE recording: an observation captured in this tick must
+      // not influence this same tick's screen decision. On a cold start the
+      // just-recorded promo price became the median itself, so isFakeDiscount
+      // saw "price >= median*threshold" and rejected the very deal that
+      // created the observation (false negative). Recording still happens for
+      // every raw deal — screen rejects included — so history keeps building.
+      const passedScreen = await this.gate.screenRaw(raw);
+      await this.curation.record(keyToString(raw.key), raw.priceCents);
+      if (!passedScreen) continue;
       survivors.push(raw);
     }
 
@@ -116,12 +126,20 @@ export class PipelineService {
 
     const enriched = await source.enrichMany(preScored);
 
-    const scored: ScoredDeal[] = enriched.map((e) => {
+    const scored: ScoredDeal[] = [];
+    for (const e of enriched) {
       const keyStr = keyToString(e.key);
       const analytics = this.curation.getAnalytics(keyStr);
       const observations = this.curation.getObservations(keyStr);
-      return this.dealScore.computeWithObservations(e, analytics, observations);
-    });
+      const base = this.dealScore.computeWithObservations(
+        e,
+        analytics,
+        observations,
+      );
+      scored.push(
+        await this.applyCouponBoost(base, e, analytics, observations),
+      );
+    }
 
     const passing = scored.filter((s) => s.score >= scoreMin);
     passing.sort((a, b) => b.score - a.score);
@@ -136,6 +154,83 @@ export class PipelineService {
     );
 
     return passing;
+  }
+
+  /**
+   * Coupon-aware score: a deal that only becomes good WITH its coupon must
+   * still be able to pass DEAL_SCORE_MIN. Resolves the deal's coupon and,
+   * when it yields a concrete final price (mode 'PRICE'), re-scores against
+   * that effective price. The returned ScoredDeal keeps the ORIGINAL deal
+   * object — price history, gate audit rows and the published message must
+   * all keep the BASE price (a couponed price would contaminate the price
+   * series). The improvement lands as one explicit `coupon_boost` factor
+   * (value = rawScore delta) so factors keep summing to rawScore and the
+   * decision stays auditable.
+   *
+   * enqueueScored re-resolves the coupon later ON PURPOSE: the dispatch path
+   * first corrects the price with a live page scrape, and the coupon line
+   * shown to the user must be computed against that corrected price.
+   */
+  // TODO(coupon-effective-price): gate.screenRaw (dedup / fake-discount) runs
+  // on the BASE price only. If the gate ever grows a "repost when the price
+  // dropped" compare, it should compare against the coupon EFFECTIVE price
+  // resolved here, not the base price. (curation-gate.service.ts is owned by
+  // another agent — flagging here instead of editing it.)
+  private async applyCouponBoost(
+    base: ScoredDeal,
+    deal: EnrichedDeal,
+    analytics: PriceAnalytics,
+    observations: PriceObservation[],
+  ): Promise<ScoredDeal> {
+    let coupon: CouponView | null = null;
+    try {
+      coupon = await this.coupons.resolveForDeal(deal, deal.raw.priceCents);
+    } catch (err) {
+      this.logger.warn(
+        `coupon resolve (score) failed for ${keyToString(deal.key)}: ${(err as Error).message}`,
+      );
+    }
+    if (
+      !coupon ||
+      coupon.mode !== 'PRICE' ||
+      coupon.finalCents == null ||
+      coupon.finalCents >= deal.raw.priceCents
+    ) {
+      return base;
+    }
+
+    const effectivePriceCents = coupon.finalCents;
+    const effRaw: RawDeal = { ...deal.raw, priceCents: effectivePriceCents };
+    if (
+      deal.raw.originalPriceCents != null &&
+      deal.raw.originalPriceCents > 0
+    ) {
+      effRaw.discountPercent = Math.round(
+        (1 - effectivePriceCents / deal.raw.originalPriceCents) * 100,
+      );
+    }
+    const eff = this.dealScore.computeWithObservations(
+      { ...deal, raw: effRaw },
+      analytics,
+      observations,
+    );
+    const boost = eff.rawScore - base.rawScore;
+    if (boost <= 0) return base;
+
+    return {
+      ...eff,
+      deal, // keep the base-price deal downstream
+      factors: { ...base.factors, coupon_boost: boost },
+      reasons: [
+        ...base.reasons,
+        {
+          code: 'coupon_boost',
+          weight: boost,
+          message: `Cupom ${coupon.code} (${coupon.discountLabel}) melhora o preço efetivo`,
+        },
+      ],
+      penalties: base.penalties,
+    };
   }
 
   /**
@@ -209,15 +304,42 @@ export class PipelineService {
     // Scrape the real displayed price (Pix + no-interest installments) once per
     // approved deal, then correct the deal's price fields so the message shows
     // the same number as the site. Scrape failure keeps the API price.
+    // Scrapes run through a small hand-rolled worker pool (SCRAPE_CONCURRENCY,
+    // default 2); results land in index-aligned slots so result-to-deal
+    // association and the enqueue order below stay untouched.
     const priceViews = new Map<string, PriceView>();
-    for (const { scored: sd } of selected) {
-      const view = await this.priceScraper.scrapePriceView(
-        sd.deal.raw.permalink,
-      );
-      if (view) {
-        this.applyPriceView(sd, view);
-        priceViews.set(keyToString(sd.deal.key), view);
+    const scrapeLimit = Math.max(1, num('SCRAPE_CONCURRENCY', 2));
+    const scrapeResults: Array<PriceView | null> = new Array<PriceView | null>(
+      selected.length,
+    ).fill(null);
+    let nextScrape = 0;
+    const scrapeWorker = async (): Promise<void> => {
+      for (;;) {
+        const i = nextScrape++;
+        if (i >= selected.length) return;
+        const sd = selected[i].scored;
+        try {
+          scrapeResults[i] = await this.priceScraper.scrapePriceView(
+            sd.deal.raw.permalink,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `price scrape failed for ${keyToString(sd.deal.key)}: ${(err as Error).message}`,
+          );
+        }
       }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(scrapeLimit, selected.length) },
+        scrapeWorker,
+      ),
+    );
+    for (let i = 0; i < selected.length; i++) {
+      const view = scrapeResults[i];
+      if (!view) continue;
+      this.applyPriceView(selected[i].scored, view);
+      priceViews.set(keyToString(selected[i].scored.deal.key), view);
     }
 
     // Resolve one matching coupon per approved deal (format-only). Uses the
