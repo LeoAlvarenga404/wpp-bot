@@ -10,6 +10,13 @@ import { isQuietHours } from './quiet-hours';
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
 
+  /**
+   * Re-entrancy guard: with the random jitter a tick can still be sleeping
+   * when the next cron fire arrives (e.g. manual trigger or a short test
+   * cron). The overlapping fire is dropped, never queued.
+   */
+  private tickInFlight = false;
+
   constructor(
     private readonly pipeline: PipelineService,
     private readonly registry: SourceRegistry,
@@ -18,12 +25,42 @@ export class SchedulerService {
 
   @Cron(process.env.SCHEDULER_CRON ?? '0 10,13,17,20 * * *')
   async tick(): Promise<void> {
+    if (this.tickInFlight) {
+      this.logger.warn('Scheduler tick skipped - previous tick still running');
+      return;
+    }
+    this.tickInFlight = true;
+    try {
+      await this.runTick();
+    } finally {
+      this.tickInFlight = false;
+    }
+  }
+
+  private async runTick(): Promise<void> {
     const enabled =
       (this.config.get<string>('SCHEDULER_ENABLED') ??
         process.env.SCHEDULER_ENABLED) === 'true';
     if (!enabled) {
       this.logger.debug('Scheduler tick skipped - SCHEDULER_ENABLED!=true');
       return;
+    }
+
+    // Anti-ban: cron fires at exact hours, which is a robotic signature.
+    // Sleep a random 0..TICK_JITTER_MAX_MIN minutes before doing anything
+    // (default 15; 0 disables). config.get only — see dispatchEnabled() for
+    // why there is no `?? process.env` fallback here.
+    const jitterMaxMin = Number(
+      this.config.get<string>('TICK_JITTER_MAX_MIN') ?? '15',
+    );
+    if (Number.isFinite(jitterMaxMin) && jitterMaxMin > 0) {
+      const waitMs = Math.floor(this.random() * jitterMaxMin * 60_000);
+      if (waitMs > 0) {
+        this.logger.log(
+          `Scheduler tick jitter - waiting ${Math.round(waitMs / 1000)}s`,
+        );
+        await this.delay(waitMs);
+      }
     }
 
     // Master switch for the whole quiet-hours window. Default 'true' preserves
@@ -144,6 +181,16 @@ export class SchedulerService {
         (err as Error).stack,
       );
     }
+  }
+
+  /** Seam for tests: overridable so specs never actually sleep. */
+  protected delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** Seam for tests: overridable to make the jitter deterministic. */
+  protected random(): number {
+    return Math.random();
   }
 
   private pickSourceId(): SourceId | null {

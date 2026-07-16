@@ -3,7 +3,7 @@ import type { RawDeal } from '../sources/source.port';
 import { CurationGateService } from './curation-gate.service';
 import type { DecisionUpsert } from './curation-decision.repo';
 
-function makeRaw(id: string, priceCents = 10000): RawDeal {
+function makeRaw(id: string, priceCents = 10000, feedId = 'f1'): RawDeal {
   return {
     key: { source: 'ml', externalId: id },
     title: `Produto ${id}`,
@@ -12,7 +12,7 @@ function makeRaw(id: string, priceCents = 10000): RawDeal {
     discountPercent: 50,
     thumbnail: '',
     permalink: `https://ml/${id}`,
-    feedId: 'f1',
+    feedId,
   };
 }
 
@@ -20,8 +20,9 @@ function makeScored(
   id: string,
   score: number,
   factors: Record<string, number> = {},
+  feedId = 'f1',
 ): ScoredDeal {
-  const raw = makeRaw(id);
+  const raw = makeRaw(id, 10000, feedId);
   return {
     deal: {
       key: raw.key,
@@ -150,6 +151,24 @@ describe('CurationGateService.screenRaw', () => {
     const gate = makeGate(d);
 
     await expect(gate.screenRaw(makeRaw('MLB4'))).resolves.toBe(false);
+  });
+
+  it('defaults DEDUP_WINDOW_DAYS to 14', async () => {
+    const d = makeDeps();
+    const gate = makeGate(d);
+
+    await gate.screenRaw(makeRaw('MLB9'));
+
+    expect(d.dedup.wasRecentlyPosted).toHaveBeenCalledWith('ml:MLB9', 14);
+  });
+
+  it('lets DEDUP_WINDOW_DAYS env override the default', async () => {
+    const d = makeDeps({ DEDUP_WINDOW_DAYS: '3' });
+    const gate = makeGate(d);
+
+    await gate.screenRaw(makeRaw('MLB9'));
+
+    expect(d.dedup.wasRecentlyPosted).toHaveBeenCalledWith('ml:MLB9', 3);
   });
 });
 
@@ -283,6 +302,97 @@ describe('CurationGateService.selectForDispatch', () => {
     );
 
     expect(out).toHaveLength(2);
+  });
+
+  describe('category diversity', () => {
+    const ids = (out: Array<{ scored: ScoredDeal }>) =>
+      out.map((o) => o.scored.deal.key.externalId);
+
+    it('never picks two consecutive deals of the same category when an alternative exists', async () => {
+      const d = makeDeps();
+      const gate = makeGate(d);
+
+      const out = await gate.selectForDispatch(
+        [
+          makeScored('A', 95, {}, 'cat1'),
+          makeScored('B', 94, {}, 'cat1'),
+          makeScored('C', 93, {}, 'cat2'),
+        ],
+        3,
+      );
+
+      // A (top score) -> C (best of a different category) -> B
+      expect(ids(out)).toEqual(['A', 'C', 'B']);
+    });
+
+    it('stays score-greedy: after switching category, picks the highest score again', async () => {
+      const d = makeDeps();
+      const gate = makeGate(d);
+
+      const out = await gate.selectForDispatch(
+        [
+          makeScored('A', 95, {}, 'cat1'),
+          makeScored('B', 94, {}, 'cat1'),
+          makeScored('C', 93, {}, 'cat2'),
+          makeScored('D', 92, {}, 'cat2'),
+        ],
+        4,
+      );
+
+      // A(cat1) -> C(cat2, best alt) -> B(cat1, best non-cat2) -> D
+      expect(ids(out)).toEqual(['A', 'C', 'B', 'D']);
+    });
+
+    it('falls back to score order when all remaining share the previous category', async () => {
+      const d = makeDeps();
+      const gate = makeGate(d);
+
+      const out = await gate.selectForDispatch(
+        [
+          makeScored('A', 95, {}, 'cat1'),
+          makeScored('B', 94, {}, 'cat1'),
+          makeScored('C', 93, {}, 'cat1'),
+        ],
+        3,
+      );
+
+      expect(ids(out)).toEqual(['A', 'B', 'C']);
+    });
+
+    it('rejected deals do not count as picks for the diversity rule', async () => {
+      const d = makeDeps();
+      const gate = makeGate(d);
+
+      const out = await gate.selectForDispatch(
+        [
+          makeScored('A', 95, {}, 'cat1'),
+          // best cat2 candidate is hard-blocked (price raise)
+          makeScored('B', 94, { price_raise_before_discount: -30 }, 'cat2'),
+          makeScored('C', 93, {}, 'cat1'),
+          makeScored('D', 92, {}, 'cat2'),
+        ],
+        3,
+      );
+
+      // A(cat1) -> B rejected -> still avoiding cat1 -> D(cat2) -> C
+      expect(ids(out)).toEqual(['A', 'D', 'C']);
+    });
+
+    it('respects max while diversifying', async () => {
+      const d = makeDeps();
+      const gate = makeGate(d);
+
+      const out = await gate.selectForDispatch(
+        [
+          makeScored('A', 95, {}, 'cat1'),
+          makeScored('B', 94, {}, 'cat1'),
+          makeScored('C', 93, {}, 'cat2'),
+        ],
+        2,
+      );
+
+      expect(ids(out)).toEqual(['A', 'C']);
+    });
   });
 
   it('forces variant A when COPY_AB_ENABLED=false', async () => {

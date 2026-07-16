@@ -50,7 +50,7 @@ export class CurationGateService implements OnModuleInit {
     const num = (k: string, def: number) =>
       Number(this.config.get<string>(k, String(def)));
     this.tz = this.config.get<string>('TZ') ?? 'America/Sao_Paulo';
-    this.dedupWindowDays = num('DEDUP_WINDOW_DAYS', 7);
+    this.dedupWindowDays = num('DEDUP_WINDOW_DAYS', 14);
     this.scoreTop = num('DEAL_SCORE_TOP', 90);
     this.minHistoryDays = num('CURATION_MIN_HISTORY_DAYS', 7);
     this.minConfidence = num('JUDGE_MIN_CONFIDENCE', 0.6);
@@ -125,17 +125,30 @@ export class CurationGateService implements OnModuleInit {
    * Dispatch gate: hard price-raise block, auto-approve for high-confidence
    * deals, LLM judge for the gray zone (no history OR score below TOP).
    * Returns at most `max` approved deals, each with its copy variant.
+   *
+   * Pick order is score-greedy with category diversity: never two consecutive
+   * approved deals of the same category (deal.raw.feedId) while a different
+   * category remains in the pool; when all remaining deals share the previous
+   * category, falls back to plain score order.
    */
   async selectForDispatch(
     scored: ScoredDeal[],
     max: number,
   ): Promise<Array<{ scored: ScoredDeal; variant: CopyVariant }>> {
-    const sorted = [...scored].sort((a, b) => b.score - a.score);
+    const pool = [...scored].sort((a, b) => b.score - a.score);
     const approved: Array<{ scored: ScoredDeal; variant: CopyVariant }> = [];
     let judgeCalls = 0;
+    let lastCategory: string | null = null;
 
-    for (const sd of sorted) {
-      if (approved.length >= max) break;
+    while (pool.length > 0 && approved.length < max) {
+      let idx = 0;
+      if (lastCategory !== null) {
+        const alt = pool.findIndex(
+          (s) => (s.deal.raw.feedId ?? '') !== lastCategory,
+        );
+        if (alt !== -1) idx = alt;
+      }
+      const sd = pool.splice(idx, 1)[0];
       const keyStr = keyToString(sd.deal.key);
       const priceCents = sd.deal.raw.priceCents;
 
@@ -228,6 +241,7 @@ export class CurationGateService implements OnModuleInit {
       }
 
       approved.push({ scored: sd, variant: this.variantFor(keyStr) });
+      lastCategory = sd.deal.raw.feedId ?? '';
     }
 
     return approved;
