@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Logger,
@@ -31,6 +32,12 @@ export class CouponController {
     if (body.type === 'PERCENT' && body.value > 100) {
       this.logger.warn(
         `coupon ${body.code} PERCENT value > 100 — likely a mistake.`,
+      );
+    }
+    if (body.type === 'FINAL' && body.scope !== 'PRODUCT') {
+      throw new BadRequestException(
+        `coupon ${body.code}: type FINAL requires scope PRODUCT — a final ` +
+          `price only makes sense for a single item.`,
       );
     }
     return this.repo.create({

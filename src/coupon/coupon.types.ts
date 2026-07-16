@@ -1,5 +1,5 @@
 export type CouponScope = 'SELLER' | 'PRODUCT';
-export type CouponType = 'PERCENT' | 'FIXED';
+export type CouponType = 'PERCENT' | 'FIXED' | 'FINAL';
 
 /** A manually-registered ML coupon (ml-coupons-v1). Money in integer cents. */
 export interface Coupon {

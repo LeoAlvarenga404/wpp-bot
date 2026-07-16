@@ -42,6 +42,16 @@ describe('applyCoupon', () => {
   it('never goes below zero', () => {
     expect(applyCoupon(1000, { ...base, type: 'FIXED', value: 5000 })).toBe(0);
   });
+  it('FINAL: value IS the final price', () => {
+    expect(applyCoupon(10000, { ...base, type: 'FINAL', value: 8990 })).toBe(
+      8990,
+    );
+  });
+  it('FINAL: clamped to the current price (never a markup)', () => {
+    expect(applyCoupon(5000, { ...base, type: 'FINAL', value: 8990 })).toBe(
+      5000,
+    );
+  });
 });
 
 describe('computeCouponView gate', () => {
@@ -98,5 +108,40 @@ describe('computeCouponView gate', () => {
       computeCouponView({ ...base, type: 'FIXED', value: 2000 }, 10000, now)
         ?.discountLabel,
     ).toBe('-R$ 20');
+  });
+});
+
+describe('computeCouponView FINAL type', () => {
+  const final: Coupon = {
+    ...base,
+    scope: 'PRODUCT',
+    targetId: 'MLB123',
+    type: 'FINAL',
+    value: 8000,
+  };
+
+  it('renders PRICE with finalCents = informed value', () => {
+    const v = computeCouponView(final, 10000, now);
+    expect(v).toMatchObject({ mode: 'PRICE', finalCents: 8000 });
+  });
+  it('discountLabel derived from current price - final', () => {
+    expect(computeCouponView(final, 10000, now)?.discountLabel).toBe(
+      '-R$ 20',
+    );
+  });
+  it('price dropped to the informed final -> null (no fake coupon)', () => {
+    expect(computeCouponView(final, 8000, now)).toBeNull();
+  });
+  it('price below the informed final -> null', () => {
+    expect(computeCouponView(final, 7000, now)).toBeNull();
+  });
+  it('SELLER scope -> null (final price is per-product only)', () => {
+    expect(
+      computeCouponView({ ...final, scope: 'SELLER' }, 10000, now),
+    ).toBeNull();
+  });
+  it('ignores minCents (final price already product-specific)', () => {
+    const v = computeCouponView({ ...final, minCents: 20000 }, 10000, now);
+    expect(v).toMatchObject({ mode: 'PRICE', finalCents: 8000 });
   });
 });

@@ -22,10 +22,10 @@ export class CreateCouponDto {
   @MinLength(1)
   targetId!: string;
 
-  @IsIn(['PERCENT', 'FIXED'])
-  type!: 'PERCENT' | 'FIXED';
+  @IsIn(['PERCENT', 'FIXED', 'FINAL'])
+  type!: 'PERCENT' | 'FIXED' | 'FINAL';
 
-  /** PERCENT: 1-100. FIXED: discount in cents. */
+  /** PERCENT: 1-100. FIXED: discount in cents. FINAL: final price in cents. */
   @IsInt()
   @Min(1)
   value!: number;
