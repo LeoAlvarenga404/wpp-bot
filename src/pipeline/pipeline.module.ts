@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AffiliateModule } from '../affiliate/affiliate.module';
 import { AuthModule } from '../auth/auth.module';
+import { CouponModule } from '../coupon/coupon.module';
 import { CurationModule } from '../curation/curation.module';
 import { DealScoreModule } from '../deal-score/deal-score.module';
 import { DedupModule } from '../dedup/dedup.module';
@@ -23,6 +24,7 @@ import { PipelineService } from './pipeline.service';
     AuthModule,
     DealScoreModule,
     MetricsModule,
+    CouponModule,
   ],
   controllers: [PipelineController],
   providers: [PipelineService, FormatterService],

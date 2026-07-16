@@ -1,5 +1,6 @@
 import type { ScoredDeal } from '../deal-score/types';
 import type { PriceView } from '../pricing/price-view';
+import type { CouponView } from '../coupon/coupon.types';
 
 export const SEND_DEAL_QUEUE = 'send-deal';
 
@@ -25,6 +26,8 @@ export interface SendDealJob {
   trustBadge?: TrustBadge;
   /** Scraped accurate price (Pix + installments). Absent = API-price fallback. */
   priceView?: PriceView;
+  /** Matched ML coupon line (ml-coupons-v1). Absent = no coupon for this deal. */
+  couponView?: CouponView;
   scored: ScoredDeal;
 }
 
@@ -32,6 +35,8 @@ export interface DigestDealEntry {
   catalogKey: string;
   variant: 'A' | 'B';
   priceView?: PriceView;
+  /** Matched ML coupon line (ml-coupons-v1). Absent = no coupon for this deal. */
+  couponView?: CouponView;
   scored: ScoredDeal;
 }
 

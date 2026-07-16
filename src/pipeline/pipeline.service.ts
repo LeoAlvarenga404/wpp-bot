@@ -22,6 +22,8 @@ import {
   type PriceScraperPort,
 } from '../pricing/price-scraper.port';
 import type { PriceView } from '../pricing/price-view';
+import { CouponService } from '../coupon/coupon.service';
+import type { CouponView } from '../coupon/coupon.types';
 import type { CopyVariant } from '../shared/variant';
 import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
@@ -45,6 +47,7 @@ export class PipelineService {
     private readonly sendQueue: Queue<SendJob>,
     @Inject(PRICE_SCRAPER_PORT)
     private readonly priceScraper: PriceScraperPort,
+    private readonly coupons: CouponService,
   ) {}
 
   async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
@@ -217,6 +220,24 @@ export class PipelineService {
       }
     }
 
+    // Resolve one matching coupon per approved deal (format-only). Uses the
+    // corrected (post-scrape) priceCents so the gate's minimum test and the
+    // final-price math match the number shown to the user.
+    const couponViews = new Map<string, CouponView>();
+    for (const { scored: sd } of selected) {
+      try {
+        const cv = await this.coupons.resolveForDeal(
+          sd.deal,
+          sd.deal.raw.priceCents,
+        );
+        if (cv) couponViews.set(keyToString(sd.deal.key), cv);
+      } catch (err) {
+        this.logger.warn(
+          `coupon resolve failed for ${keyToString(sd.deal.key)}: ${(err as Error).message}`,
+        );
+      }
+    }
+
     const addSingle = async (
       sd: ScoredDeal,
       variant: CopyVariant,
@@ -255,6 +276,7 @@ export class PipelineService {
             variant,
             trustBadge,
             priceView: priceViews.get(catalogKey),
+            couponView: couponViews.get(catalogKey),
           },
           { jobId },
         );
@@ -300,6 +322,7 @@ export class PipelineService {
                 variant,
                 scored: sd,
                 priceView: priceViews.get(keyToString(sd.deal.key)),
+                couponView: couponViews.get(keyToString(sd.deal.key)),
               })),
             },
             { jobId },

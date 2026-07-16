@@ -149,6 +149,9 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
   const priceScraper = {
     scrapePriceView: jest.fn(async () => null),
   } as any;
+  const coupons = {
+    resolveForDeal: jest.fn(async () => null),
+  } as any;
 
   return {
     fakeSource,
@@ -165,6 +168,7 @@ function makeDeps(opts: { rawDeals: RawDeal[]; failingId?: string }) {
       targets,
       sendQueue,
       priceScraper,
+      coupons,
     ),
     dedup,
     gate,
