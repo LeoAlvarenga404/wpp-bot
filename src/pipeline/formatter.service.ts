@@ -192,54 +192,29 @@ export class FormatterService {
     if (entries.length === 0) {
       throw new Error('formatDigest requires at least one deal');
     }
-    const links = await Promise.all(
-      entries.map((e) => this.resolveLink(e.scored.deal.raw)),
-    );
+    const [links, hooks] = await Promise.all([
+      Promise.all(entries.map((e) => this.resolveLink(e.scored.deal.raw))),
+      Promise.all(
+        entries.map((e) =>
+          this.headline.generate(scoredDealToHeadlineItem(e.scored)),
+        ),
+      ),
+    ]);
     const blocks = entries.map((e, i) =>
-      this.digestBlock(e.scored, e.variant, links[i], e.priceView, e.couponView),
+      ofertasTemplate({
+        sd: e.scored,
+        link: links[i],
+        hook: hooks[i],
+        priceView: e.priceView,
+        couponView: e.couponView,
+      }),
     );
     const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
-    const caption = [
-      header,
-      '',
-      blocks.join('\n\n➖➖➖\n\n'),
-      '',
-      this.disclaimerLine(),
-    ].join('\n');
+    const caption = [header, '', blocks.join('\n\n➖➖➖\n\n')].join('\n');
     const imageUrl = this.toHiResImage(
       entries[0].scored.deal.raw.thumbnail || '',
     );
     return { caption, imageUrl };
-  }
-
-  private digestBlock(
-    sd: ScoredDeal,
-    variant: CopyVariant,
-    link: string,
-    priceView?: PriceView,
-    couponView?: CouponView,
-  ): string {
-    const raw = sd.deal.raw;
-    const emoji =
-      sd.level === 'super' ? '🚨' : sd.level === 'top' ? '🔥' : '✅';
-    const price = raw.priceCents / 100;
-    const original =
-      raw.originalPriceCents != null ? raw.originalPriceCents / 100 : null;
-    const lines = [`${emoji} *${raw.title}*`];
-    if (variant === 'B' && original != null && original > price) {
-      lines.push(`❌ De: ~${this.formatBRL(original)}~`);
-      lines.push(
-        `✅ Por: *${this.formatBRL(price)}* (-${raw.discountPercent}%)`,
-      );
-    } else {
-      lines.push(`💰 *${this.formatBRL(price)}* (-${raw.discountPercent}%)`);
-    }
-    lines.push(...this.priceExtraLines(priceView));
-    const cLine = this.couponLine(couponView);
-    if (cLine) lines.push(cLine);
-    if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
-    lines.push(`👉 ${link}`);
-    return lines.join('\n');
   }
 
   /**
