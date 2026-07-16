@@ -187,15 +187,14 @@ function makeScored(level: ScoredDeal['level']): ScoredDeal {
 }
 
 describe('FormatterService.formatScored (ofertas clone)', () => {
-  it('emits hashtag, uppercased hook, title, price and link — no disclaimer', async () => {
-    const svc = new FormatterService(
-      makeAffiliate(),
-      makeHeadline('que preço'),
-    );
+  it('emits uppercased title first, price and link — no hashtag, hook or disclaimer', async () => {
+    const headlineGen = makeHeadline('que preço');
+    const svc = new FormatterService(makeAffiliate(), headlineGen);
     const { caption } = await svc.formatScored(makeScored('good'));
-    expect(caption.split('\n')[0]).toBe('#MercadoLivre');
-    expect(caption).toContain('QUE PREÇO 🔥');
-    expect(caption).toContain('➡️ T');
+    expect(caption.split('\n')[0]).toBe('➡️ T');
+    expect(caption).not.toContain('#MercadoLivre');
+    expect(caption).not.toContain('QUE PREÇO');
+    expect(headlineGen.generate).not.toHaveBeenCalled();
     expect(caption).toContain('🛒 Link: https://meli.la/ABC');
     expect(caption).not.toMatch(/Link de afiliado/);
     expect(caption).not.toMatch(/PROMOÇÃO/);
@@ -227,10 +226,10 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
     expect(caption).toContain('⚡ FULL');
   });
 
-  it('renders coupon code only', async () => {
+  it('renders the final "com cupom" price when it beats the promo', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const { caption } = await svc.formatScored(
-      makeScored('good'),
+      makeScored('good'), // priceCents 10000, no priceView -> promo à vista
       'A',
       undefined,
       undefined,
@@ -243,7 +242,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
         validUntil: '2999-01-01T00:00:00.000Z',
       },
     );
-    expect(caption).toContain('🎟️ Use o cupom: ABC');
+    expect(caption).toContain('🎟️ Com o cupom ABC: R$ 80  (-R$ 20)');
     expect(caption).not.toMatch(/válido até/);
   });
 

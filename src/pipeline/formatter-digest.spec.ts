@@ -63,9 +63,9 @@ describe('FormatterService.formatDigest (ofertas clone)', () => {
 
     expect(caption).toContain('🔥 3 ACHADOS NUM POST SÓ');
     expect(caption).toContain('➖➖➖');
-    expect(caption).toContain('➡️ Produto MLB1');
-    expect(caption).toContain('➡️ Produto MLB2');
-    expect(caption).toContain('➡️ Produto MLB3');
+    expect(caption).toContain('➡️ PRODUTO MLB1');
+    expect(caption).toContain('➡️ PRODUTO MLB2');
+    expect(caption).toContain('➡️ PRODUTO MLB3');
     expect(caption).toContain('🛒 Link: aff:https://ml/MLB1');
     expect(caption).toContain('🛒 Link: aff:https://ml/MLB3');
     expect(affiliate.resolve).toHaveBeenCalledTimes(3);

@@ -14,23 +14,6 @@ import { templates } from './templates';
 import type { CaptionTemplate } from './templates';
 import { ofertasTemplate } from './templates/template-ofertas';
 
-function scoredDealToHeadlineItem(scored: ScoredDeal): DealItem {
-  const raw = scored.deal.raw;
-  const externalId = scored.deal.key.externalId;
-  return {
-    catalogId: externalId,
-    itemId: externalId,
-    title: raw.title,
-    thumbnail: raw.thumbnail,
-    price: raw.priceCents / 100,
-    originalPrice: (raw.originalPriceCents ?? raw.priceCents) / 100,
-    sellerId: 0,
-    freeShipping: scored.deal.signals.freeShipping,
-    permalink: raw.permalink,
-    discountPercent: raw.discountPercent,
-  };
-}
-
 @Injectable()
 export class FormatterService {
   private readonly templates: CaptionTemplate[];
@@ -88,15 +71,10 @@ export class FormatterService {
     couponView?: CouponView,
   ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
-    const headlineItem = scoredDealToHeadlineItem(scored);
-    const [link, hook] = await Promise.all([
-      this.resolveLink(raw),
-      this.headline.generate(headlineItem),
-    ]);
+    const link = await this.resolveLink(raw);
     const caption = ofertasTemplate({
       sd: scored,
       link,
-      hook,
       priceView,
       couponView,
     });
@@ -120,19 +98,13 @@ export class FormatterService {
     if (entries.length === 0) {
       throw new Error('formatDigest requires at least one deal');
     }
-    const [links, hooks] = await Promise.all([
-      Promise.all(entries.map((e) => this.resolveLink(e.scored.deal.raw))),
-      Promise.all(
-        entries.map((e) =>
-          this.headline.generate(scoredDealToHeadlineItem(e.scored)),
-        ),
-      ),
-    ]);
+    const links = await Promise.all(
+      entries.map((e) => this.resolveLink(e.scored.deal.raw)),
+    );
     const blocks = entries.map((e, i) =>
       ofertasTemplate({
         sd: e.scored,
         link: links[i],
-        hook: hooks[i],
         priceView: e.priceView,
         couponView: e.couponView,
       }),

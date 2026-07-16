@@ -1,4 +1,4 @@
-import { ofertasTemplate, sourceHashtag, linkLabel } from './template-ofertas';
+import { ofertasTemplate, linkLabel } from './template-ofertas';
 import type { ScoredDeal, DealLevel } from '../../deal-score/types';
 
 function makeScored(
@@ -46,11 +46,7 @@ function makeScored(
   };
 }
 
-describe('sourceHashtag / linkLabel', () => {
-  it('maps sources to hashtags', () => {
-    expect(sourceHashtag('ml')).toBe('#MercadoLivre');
-    expect(sourceHashtag('shopee')).toBe('#Shopee');
-  });
+describe('linkLabel', () => {
   it('maps sources to link labels', () => {
     expect(linkLabel('ml')).toBe('Link:');
     expect(linkLabel('shopee')).toBe('Link do produto:');
@@ -58,16 +54,14 @@ describe('sourceHashtag / linkLabel', () => {
 });
 
 describe('ofertasTemplate', () => {
-  it('renders ML layout: hashtag, uppercased hook, title, price à vista, link', () => {
+  it('renders layout: uppercased title first, price block, link — no hashtag or hook', () => {
     const out = ofertasTemplate({
       sd: makeScored({ source: 'ml', priceCents: 8700 }),
       link: 'https://meli.la/ABC',
-      hook: 'que preço é esse',
     });
     const lines = out.split('\n');
-    expect(lines[0]).toBe('#MercadoLivre');
-    expect(out).toContain('QUE PREÇO É ESSE 🔥');
-    expect(out).toContain('➡️ Echo Dot 5');
+    expect(lines[0]).toBe('➡️ ECHO DOT 5');
+    expect(out).not.toContain('#MercadoLivre');
     expect(out).toContain('❌ De ~R$ 200~');
     expect(out).toContain('✅ Por R$ 87 à vista');
     expect(out).toContain('🛒 Link: https://meli.la/ABC');
@@ -78,7 +72,6 @@ describe('ofertasTemplate', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 10000 }),
       link: 'l',
-      hook: 'x',
       priceView: {
         priceCents: 10000,
         originalPriceCents: 20000,
@@ -97,14 +90,12 @@ describe('ofertasTemplate', () => {
     const withDe = ofertasTemplate({
       sd: makeScored({ priceCents: 8700 }), // original 20000 > promo
       link: 'l',
-      hook: 'h',
     });
     expect(withDe).toContain('❌ De ~R$ 200~');
 
     const noDe = ofertasTemplate({
       sd: makeScored({ priceCents: 8700 }),
       link: 'l',
-      hook: 'h',
       priceView: {
         priceCents: 8700,
         originalPriceCents: 8700, // equal → no fake "De"
@@ -121,7 +112,6 @@ describe('ofertasTemplate', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 100000 }),
       link: 'l',
-      hook: 'h',
       priceView: {
         priceCents: 100000,
         originalPriceCents: 150000,
@@ -136,25 +126,16 @@ describe('ofertasTemplate', () => {
   });
 
   it('renders ⚡ FULL only when signals.isFull', () => {
-    const withFull = ofertasTemplate({
-      sd: makeScored({ isFull: true }),
-      link: 'l',
-      hook: 'h',
-    });
-    const noFull = ofertasTemplate({
-      sd: makeScored({ isFull: false }),
-      link: 'l',
-      hook: 'h',
-    });
+    const withFull = ofertasTemplate({ sd: makeScored({ isFull: true }), link: 'l' });
+    const noFull = ofertasTemplate({ sd: makeScored({ isFull: false }), link: 'l' });
     expect(withFull).toContain('⚡ FULL');
     expect(noFull).not.toContain('⚡ FULL');
   });
 
-  it('renders coupon code only (no validity/price) when couponView present', () => {
+  it('renders the final "com cupom" price when it beats the promo price', () => {
     const out = ofertasTemplate({
-      sd: makeScored(),
+      sd: makeScored({ priceCents: 8700 }),
       link: 'l',
-      hook: 'h',
       couponView: {
         code: 'SHOWNOCAMPO',
         mode: 'PRICE',
@@ -164,63 +145,82 @@ describe('ofertasTemplate', () => {
         validUntil: '2999-01-01T00:00:00.000Z',
       },
     });
-    expect(out).toContain('🎟️ Use o cupom: SHOWNOCAMPO');
+    const lines = out.split('\n');
+    const couponIdx = lines.findIndex((l) => l.startsWith('🎟️'));
+    const linkIdx = lines.findIndex((l) => l.startsWith('🛒'));
+    expect(lines[couponIdx]).toBe('🎟️ Com o cupom SHOWNOCAMPO: R$ 80  (-R$ 20)');
+    expect(couponIdx).toBeLessThan(linkIdx);
+    expect(lines[couponIdx - 1]).toContain('✅ Por'); // right after price block
     expect(out).not.toMatch(/válido até/);
-    expect(out).not.toMatch(/R\$\s?80,00/);
+  });
+
+  it('falls back to code-only when the coupon final does not beat the promo (pix lower)', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ priceCents: 10000 }),
+      link: 'l',
+      priceView: {
+        priceCents: 10000,
+        originalPriceCents: 20000,
+        discountPercent: 50,
+        pixPriceCents: 7500, // pix already below the coupon final
+        installments: null,
+        scrapedAt: '2026-07-15T20:00:00.000Z',
+      },
+      couponView: {
+        code: 'FRACO',
+        mode: 'PRICE',
+        finalCents: 9000, // à vista - coupon, still above the pix promo
+        discountLabel: '-R$ 10',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
+    });
+    expect(out).toContain('🎟️ Use o cupom: FRACO');
+    expect(out).not.toContain('Com o cupom');
+  });
+
+  it('renders the minimum-purchase CTA when the deal is below the coupon minimum', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ priceCents: 8700 }),
+      link: 'l',
+      couponView: {
+        code: 'ACIMA200',
+        mode: 'CTA',
+        finalCents: null,
+        discountLabel: '-R$ 30',
+        minCents: 20000,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
+    });
+    expect(out).toContain('🎟️ Cupom ACIMA200 em compras acima de R$ 200');
   });
 
   it('omits coupon line when no couponView', () => {
-    const out = ofertasTemplate({ sd: makeScored(), link: 'l', hook: 'h' });
+    const out = ofertasTemplate({ sd: makeScored(), link: 'l' });
     expect(out).not.toContain('🎟️');
   });
 
-  it('uses Shopee hashtag + link label for shopee source', () => {
+  it('uses Shopee link label for shopee source, without hashtag', () => {
     const out = ofertasTemplate({
       sd: makeScored({ source: 'shopee' }),
       link: 'https://s.shopee.com.br/x',
-      hook: 'h',
     });
-    expect(out.split('\n')[0]).toBe('#Shopee');
+    expect(out).not.toContain('#Shopee');
     expect(out).toContain('🛒 Link do produto: https://s.shopee.com.br/x');
   });
 
-  it('picks hook emoji by level', () => {
-    expect(
-      ofertasTemplate({
-        sd: makeScored({ level: 'good' }),
-        link: 'l',
-        hook: 'h',
-      }),
-    ).toContain('H 🔥');
-    expect(
-      ofertasTemplate({
-        sd: makeScored({ level: 'top' }),
-        link: 'l',
-        hook: 'h',
-      }),
-    ).toContain('H 🔥🔥');
-    expect(
-      ofertasTemplate({
-        sd: makeScored({ level: 'super' }),
-        link: 'l',
-        hook: 'h',
-      }),
-    ).toContain('H 🚨');
-  });
-
-  it('omits the hook line entirely when hook is empty', () => {
-    const out = ofertasTemplate({ sd: makeScored(), link: 'l', hook: '' });
-    const lines = out.split('\n');
-    expect(lines[0]).toBe('#MercadoLivre');
-    expect(lines[1]).toBe('');
-    expect(lines[2]).toContain('➡️');
+  it('uppercases the title with pt-BR locale', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ title: 'Fone é ótimo ção' }),
+      link: 'l',
+    });
+    expect(out.split('\n')[0]).toBe('➡️ FONE É ÓTIMO ÇÃO');
   });
 
   it('formats thousands and floors cents', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 484699 }),
       link: 'l',
-      hook: 'h',
     });
     expect(out).toContain('✅ Por R$ 4.846 à vista');
   });

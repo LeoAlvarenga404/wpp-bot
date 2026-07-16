@@ -24,7 +24,7 @@ import { NoopHeadlineAdapter } from './noop-headline.adapter';
         deepseek: DeepSeekHeadlineAdapter,
       ): HeadlineGenerator => {
         const provider = (
-          config.get<string>('HEADLINE_PROVIDER', 'deepseek') ?? 'deepseek'
+          config.get<string>('HEADLINE_PROVIDER', 'noop') ?? 'noop'
         )
           .toLowerCase()
           .trim();
