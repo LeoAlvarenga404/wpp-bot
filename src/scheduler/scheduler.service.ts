@@ -26,6 +26,19 @@ export class SchedulerService {
       return;
     }
 
+    // Master switch for the whole quiet-hours window. Default 'true' preserves
+    // the QUIET_START/QUIET_END behavior; set QUIET_HOURS_ENABLED=false to let
+    // the scheduler fire around the clock (dev/testing) without losing the
+    // configured window — flip back to 'true' for production.
+    //
+    // NOTE: config.get only, no `?? process.env` fallback — same reason as
+    // dispatchEnabled(): requiring @prisma/client side-loads the repo's .env
+    // into process.env, so a process.env read makes this env-dependent under
+    // Jest. ConfigService already reads .env in production.
+    const quietEnabled =
+      (
+        this.config.get<string>('QUIET_HOURS_ENABLED') ?? 'true'
+      ).toLowerCase() !== 'false';
     const tz =
       this.config.get<string>('TZ') ?? process.env.TZ ?? 'America/Sao_Paulo';
     const quietStart = Number(
@@ -34,7 +47,7 @@ export class SchedulerService {
     const quietEnd = Number(
       this.config.get<string>('QUIET_END') ?? process.env.QUIET_END ?? '7',
     );
-    if (isQuietHours(new Date(), quietStart, quietEnd, tz)) {
+    if (quietEnabled && isQuietHours(new Date(), quietStart, quietEnd, tz)) {
       this.logger.log(`Scheduler tick skipped - quiet hours`);
       return;
     }

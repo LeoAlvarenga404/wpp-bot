@@ -79,6 +79,53 @@ describe('SchedulerService.tickBatch', () => {
     expect(pipeline.enqueueScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
+
+  it('skips when inside quiet hours', async () => {
+    const env = {
+      SCHEDULER_ENABLED: 'true',
+      SCHEDULER_MODE: 'batch',
+      QUIET_START: '23',
+      QUIET_END: '7',
+      TZ: 'UTC',
+    };
+    const pipeline = makePipeline();
+    const svc = new SchedulerService(
+      pipeline,
+      makeRegistry([makeFakeSource('ml')]),
+      makeConfig(env),
+    );
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
+
+    await svc.tick();
+
+    expect(pipeline.collectAllScored).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('fires inside quiet hours when QUIET_HOURS_ENABLED=false', async () => {
+    const env = {
+      SCHEDULER_ENABLED: 'true',
+      SCHEDULER_MODE: 'batch',
+      QUIET_START: '23',
+      QUIET_END: '7',
+      QUIET_HOURS_ENABLED: 'false',
+      TZ: 'UTC',
+    };
+    const pipeline = makePipeline();
+    const svc = new SchedulerService(
+      pipeline,
+      makeRegistry([makeFakeSource('ml')]),
+      makeConfig(env),
+    );
+    // Midnight UTC = inside the 23->7 window; would normally skip.
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
+
+    await svc.tick();
+
+    expect(pipeline.collectAllScored).toHaveBeenCalled();
+    expect(pipeline.enqueueScored).toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 });
 
 describe('SchedulerService.tickLegacy', () => {
