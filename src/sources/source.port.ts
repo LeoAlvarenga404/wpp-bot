@@ -39,6 +39,8 @@ export interface EnrichedDeal {
     installmentsNoInterest: boolean;
     volumeTier: 'high' | 'mid' | 'low' | 'none';
     isVerifiedStore: boolean;
+    /** ML fulfillment. Absent/false for Shopee and API-fallback deals. */
+    isFull?: boolean;
   };
   extras: Record<string, unknown>;
 }

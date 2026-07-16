@@ -86,7 +86,13 @@ export class MLSource implements DealSourcePort {
     });
     const enrichedML = await this.enrichment.enrichMany(dealItems);
     return enrichedML.map((e, i) =>
-      toEnrichedDeal(raws[i], e.seller, e.item, dealItems[i].freeShipping),
+      toEnrichedDeal(
+        raws[i],
+        e.seller,
+        e.item,
+        dealItems[i].freeShipping,
+        dealItems[i].isFull ?? false,
+      ),
     );
   }
 

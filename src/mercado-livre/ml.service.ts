@@ -86,6 +86,7 @@ export class MercadoLivreService {
         freeShipping: !!best.shipping?.free_shipping,
         permalink: `https://www.mercadolivre.com.br/p/${catalogId}`,
         discountPercent,
+        isFull: best.shipping?.logistic_type === 'fulfillment',
       };
     } catch (err: any) {
       this.logger.warn(

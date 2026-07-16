@@ -165,6 +165,7 @@ describe('toEnrichedDeal', () => {
       installmentsNoInterest: true,
       volumeTier: 'mid',
       isVerifiedStore: true,
+      isFull: false,
     });
     expect(out.extras).toMatchObject({
       powerSellerStatus: 'gold',
@@ -200,7 +201,31 @@ describe('toEnrichedDeal', () => {
       installmentsNoInterest: false,
       volumeTier: 'none',
       isVerifiedStore: false,
+      isFull: false,
     });
     expect(out.extras.soldQuantity).toBeNull();
+  });
+});
+
+describe('toEnrichedDeal isFull', () => {
+  const raw = {
+    key: { source: 'ml' as const, externalId: 'MLB1' },
+    title: 'T',
+    priceCents: 10000,
+    originalPriceCents: 20000,
+    discountPercent: 50,
+    thumbnail: '',
+    permalink: 'p',
+    feedId: 'F',
+  };
+
+  it('sets signals.isFull=true when isFull arg is true', () => {
+    const e = toEnrichedDeal(raw, null, null, true, true);
+    expect(e.signals.isFull).toBe(true);
+  });
+
+  it('defaults signals.isFull to false when arg omitted', () => {
+    const e = toEnrichedDeal(raw, null, null, true);
+    expect(e.signals.isFull).toBe(false);
   });
 });
