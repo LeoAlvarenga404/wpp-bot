@@ -9,6 +9,7 @@ import type { CopyVariant } from '../shared/variant';
 import type { TrustBadge } from '../queue/queue.types';
 import type { RawDeal } from '../sources/source.port';
 import type { PriceView } from '../pricing/price-view';
+import type { CouponView } from '../coupon/coupon.types';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
 import { variantBByLevel } from './templates/variants';
 
@@ -83,6 +84,7 @@ export class FormatterService {
     variant: CopyVariant = 'A',
     trustBadge?: TrustBadge,
     priceView?: PriceView,
+    couponView?: CouponView,
   ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
@@ -104,10 +106,12 @@ export class FormatterService {
       ? `${trustBadge.label} ✓ monitorado há ${trustBadge.monitoredDays} dias`
       : null;
 
-    const body = this.injectPriceExtras(
+    let body = this.injectPriceExtras(
       tmpl(scored, formatBRL, link, hook, trustLine),
       priceView,
     );
+    const cLine = this.couponLine(couponView);
+    if (cLine) body = this.appendCouponLine(body, cLine);
     const caption = `${body}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
@@ -150,6 +154,41 @@ export class FormatterService {
     return out;
   }
 
+  /** One coupon line for the caption, or null (ml-coupons-v1). */
+  private couponLine(cv?: CouponView): string | null {
+    if (!cv) return null;
+    const until = this.formatUntil(cv.validUntil);
+    if (cv.mode === 'PRICE' && cv.finalCents != null) {
+      return `🎟️ Com cupom *${cv.code}*: ${this.formatBRL(cv.finalCents / 100)} (válido até ${until})`;
+    }
+    // CTA (below minimum) — no price claim.
+    const min =
+      cv.minCents != null
+        ? ` (acima de ${this.formatBRL(cv.minCents / 100)})`
+        : '';
+    return `🎟️ Cupom *${cv.code}* ${cv.discountLabel}${min} — válido até ${until}`;
+  }
+
+  /** Insert the coupon line right under the price block (after Pix/installments). */
+  private appendCouponLine(body: string, line: string): string {
+    const lines = body.split('\n');
+    let idx = lines.findIndex((l) => /no Pix|sem juros/.test(l));
+    if (idx === -1) idx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
+    if (idx === -1) idx = lines.findIndex((l) => /R\$/.test(l));
+    if (idx === -1) return [body, line].join('\n');
+    lines.splice(idx + 1, 0, line);
+    return lines.join('\n');
+  }
+
+  private formatUntil(iso: string): string {
+    const d = new Date(iso);
+    return d.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      timeZone: process.env.TZ ?? 'America/Sao_Paulo',
+    });
+  }
+
   /**
    * One WA message bundling several approved deals. Header + one compact
    * block per deal + single disclaimer. Image comes from the first entry
@@ -160,6 +199,7 @@ export class FormatterService {
       scored: ScoredDeal;
       variant: CopyVariant;
       priceView?: PriceView;
+      couponView?: CouponView;
     }>,
   ): Promise<{ caption: string; imageUrl: string }> {
     if (entries.length === 0) {
@@ -169,7 +209,7 @@ export class FormatterService {
       entries.map((e) => this.resolveLink(e.scored.deal.raw)),
     );
     const blocks = entries.map((e, i) =>
-      this.digestBlock(e.scored, e.variant, links[i], e.priceView),
+      this.digestBlock(e.scored, e.variant, links[i], e.priceView, e.couponView),
     );
     const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
     const caption = [
@@ -190,6 +230,7 @@ export class FormatterService {
     variant: CopyVariant,
     link: string,
     priceView?: PriceView,
+    couponView?: CouponView,
   ): string {
     const raw = sd.deal.raw;
     const emoji =
@@ -207,6 +248,8 @@ export class FormatterService {
       lines.push(`💰 *${this.formatBRL(price)}* (-${raw.discountPercent}%)`);
     }
     lines.push(...this.priceExtraLines(priceView));
+    const cLine = this.couponLine(couponView);
+    if (cLine) lines.push(cLine);
     if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
     lines.push(`👉 ${link}`);
     return lines.join('\n');

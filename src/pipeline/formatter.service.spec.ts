@@ -247,3 +247,75 @@ describe('FormatterService.formatScored', () => {
     expect(caption).not.toMatch(/no Pix/i);
   });
 });
+
+describe('FormatterService coupon line', () => {
+  it('PRICE mode shows final price + code', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(
+      makeScored('good'),
+      'A',
+      undefined,
+      undefined,
+      {
+        code: 'ABC',
+        mode: 'PRICE',
+        finalCents: 8000,
+        discountLabel: '-R$ 20',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
+    );
+    expect(caption).toContain('🎟️');
+    expect(caption).toContain('ABC');
+    expect(caption).toMatch(/R\$\s?80,00/);
+  });
+
+  it('CTA mode shows code + threshold, no final price claim', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(
+      makeScored('good'),
+      'A',
+      undefined,
+      undefined,
+      {
+        code: 'XYZ',
+        mode: 'CTA',
+        finalCents: null,
+        discountLabel: '-R$ 20',
+        minCents: 10000,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
+    );
+    expect(caption).toContain('🎟️');
+    expect(caption).toContain('XYZ');
+    expect(caption).toContain('acima de');
+    expect(caption).toMatch(/R\$\s?100,00/);
+  });
+
+  it('no couponView -> no coupon line', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('good'));
+    expect(caption).not.toContain('🎟️');
+  });
+
+  it('threads couponView through the digest block', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatDigest([
+      {
+        scored: makeScored('top'),
+        variant: 'A',
+        couponView: {
+          code: 'DIGCUP',
+          mode: 'PRICE',
+          finalCents: 9000,
+          discountLabel: '-10%',
+          minCents: null,
+          validUntil: '2999-01-01T00:00:00.000Z',
+        },
+      },
+      { scored: makeScored('good'), variant: 'A' },
+    ]);
+    expect(caption).toContain('🎟️');
+    expect(caption).toContain('DIGCUP');
+  });
+});
