@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Money is always integer cents internally; render prices as **integer reais** with `Math.floor(cents / 100)` and `toLocaleString('pt-BR')` (thousand separator, no cents). Floor never overstates the price.
-- Price line emoji is `✅` (green). `no PIX` only when `priceView.pixPriceCents != null`; otherwise `à vista`.
+- Price line emoji is `✅` (green). `NO PIX` only when `priceView.pixPriceCents != null`; otherwise `à vista`.
 - Store hashtag: `ml` → `#MercadoLivre`, `shopee` → `#Shopee`.
 - Link label: `ml` → `Link:`, `shopee` → `Link do produto:`.
 - No affiliate disclaimer on scored/digest captions.
@@ -25,6 +25,7 @@
 ### Task 1: Plumb the ML FULL signal
 
 **Files:**
+
 - Modify: `src/mercado-livre/types.ts` (add `isFull?: boolean` to `DealItem`)
 - Modify: `src/mercado-livre/ml.service.ts:78-89` (`tryBuildDeal` returns `isFull`)
 - Modify: `src/sources/source.port.ts:37-42` (add `isFull?: boolean` to `signals`)
@@ -33,6 +34,7 @@
 - Test: `src/sources/mercado-livre/mapping.spec.ts`
 
 **Interfaces:**
+
 - Produces: `DealItem.isFull?: boolean`; `EnrichedDeal.signals.isFull?: boolean`; `toEnrichedDeal(raw, seller, item, freeShipping, isFull?)` — 5th positional arg `isFull: boolean = false`.
 
 - [ ] **Step 1: Write the failing test**
@@ -137,15 +139,15 @@ In `src/mercado-livre/ml.service.ts`, inside `tryBuildDeal` return object (after
 In `src/sources/mercado-livre/ml-source.service.ts`, update the enrich map call:
 
 ```ts
-    return enrichedML.map((e, i) =>
-      toEnrichedDeal(
-        raws[i],
-        e.seller,
-        e.item,
-        dealItems[i].freeShipping,
-        dealItems[i].isFull ?? false,
-      ),
-    );
+return enrichedML.map((e, i) =>
+  toEnrichedDeal(
+    raws[i],
+    e.seller,
+    e.item,
+    dealItems[i].freeShipping,
+    dealItems[i].isFull ?? false,
+  ),
+);
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -170,10 +172,12 @@ git commit -m "feat(deal): plumb ML FULL (logistic_type=fulfillment) into signal
 ### Task 2: Create the `ofertasTemplate` pure function + helpers
 
 **Files:**
+
 - Create: `src/pipeline/templates/template-ofertas.ts`
 - Test: `src/pipeline/templates/template-ofertas.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `ScoredDeal` (`src/deal-score/types`), `PriceView` (`src/pricing/price-view`), `CouponView` (`src/coupon/coupon.types`), `signals.isFull` from Task 1.
 - Produces:
   - `sourceHashtag(source: 'ml' | 'shopee'): string`
@@ -262,7 +266,7 @@ describe('ofertasTemplate', () => {
     expect(out).not.toMatch(/Link de afiliado/);
   });
 
-  it('shows "no PIX" with the pix price when priceView has one', () => {
+  it('shows "NO PIX" with the pix price when priceView has one', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 10000 }),
       link: 'l',
@@ -276,13 +280,21 @@ describe('ofertasTemplate', () => {
         scrapedAt: '2026-07-15T20:00:00.000Z',
       },
     });
-    expect(out).toContain('✅ R$ 87 no PIX');
+    expect(out).toContain('✅ R$ 87 NO PIX');
     expect(out).not.toContain('à vista');
   });
 
   it('renders ⚡ FULL only when signals.isFull', () => {
-    const withFull = ofertasTemplate({ sd: makeScored({ isFull: true }), link: 'l', hook: 'h' });
-    const noFull = ofertasTemplate({ sd: makeScored({ isFull: false }), link: 'l', hook: 'h' });
+    const withFull = ofertasTemplate({
+      sd: makeScored({ isFull: true }),
+      link: 'l',
+      hook: 'h',
+    });
+    const noFull = ofertasTemplate({
+      sd: makeScored({ isFull: false }),
+      link: 'l',
+      hook: 'h',
+    });
     expect(withFull).toContain('⚡ FULL');
     expect(noFull).not.toContain('⚡ FULL');
   });
@@ -312,15 +324,37 @@ describe('ofertasTemplate', () => {
   });
 
   it('uses Shopee hashtag + link label for shopee source', () => {
-    const out = ofertasTemplate({ sd: makeScored({ source: 'shopee' }), link: 'https://s.shopee.com.br/x', hook: 'h' });
+    const out = ofertasTemplate({
+      sd: makeScored({ source: 'shopee' }),
+      link: 'https://s.shopee.com.br/x',
+      hook: 'h',
+    });
     expect(out.split('\n')[0]).toBe('#Shopee');
     expect(out).toContain('🛒 Link do produto: https://s.shopee.com.br/x');
   });
 
   it('picks hook emoji by level', () => {
-    expect(ofertasTemplate({ sd: makeScored({ level: 'good' }), link: 'l', hook: 'h' })).toContain('H 🔥');
-    expect(ofertasTemplate({ sd: makeScored({ level: 'top' }), link: 'l', hook: 'h' })).toContain('H 🔥🔥');
-    expect(ofertasTemplate({ sd: makeScored({ level: 'super' }), link: 'l', hook: 'h' })).toContain('H 🚨');
+    expect(
+      ofertasTemplate({
+        sd: makeScored({ level: 'good' }),
+        link: 'l',
+        hook: 'h',
+      }),
+    ).toContain('H 🔥');
+    expect(
+      ofertasTemplate({
+        sd: makeScored({ level: 'top' }),
+        link: 'l',
+        hook: 'h',
+      }),
+    ).toContain('H 🔥🔥');
+    expect(
+      ofertasTemplate({
+        sd: makeScored({ level: 'super' }),
+        link: 'l',
+        hook: 'h',
+      }),
+    ).toContain('H 🚨');
   });
 
   it('omits the hook line entirely when hook is empty', () => {
@@ -398,7 +432,8 @@ export function ofertasTemplate(input: OfertasTemplateInput): string {
   const lines: string[] = [];
 
   lines.push(sourceHashtag(source));
-  if (hook) lines.push(`${hook.toLocaleUpperCase('pt-BR')} ${hookEmoji(sd.level)}`);
+  if (hook)
+    lines.push(`${hook.toLocaleUpperCase('pt-BR')} ${hookEmoji(sd.level)}`);
   lines.push('');
 
   lines.push(`➡️ ${raw.title}`);
@@ -407,7 +442,7 @@ export function ofertasTemplate(input: OfertasTemplateInput): string {
 
   const pix = priceView?.pixPriceCents ?? null;
   const displayCents = pix ?? priceView?.priceCents ?? raw.priceCents;
-  const priceLabel = pix != null ? 'no PIX' : 'à vista';
+  const priceLabel = pix != null ? 'NO PIX' : 'à vista';
   lines.push(`✅ ${priceIntBRL(displayCents)} ${priceLabel}`);
 
   if (couponView) lines.push(`🎟️ Use o cupom: ${couponView.code}`);
@@ -434,10 +469,12 @@ git commit -m "feat(pipeline): add ofertasTemplate clone caption format"
 ### Task 3: Rewire `formatScored` to `ofertasTemplate` (drop disclaimer, ignore variant)
 
 **Files:**
+
 - Modify: `src/pipeline/formatter.service.ts` (`formatScored` body; keep signature)
 - Test: `src/pipeline/formatter.service.spec.ts` (replace the `formatScored` + coupon `describe` blocks; leave the `formatItem` block untouched)
 
 **Interfaces:**
+
 - Consumes: `ofertasTemplate`, `sourceHashtag`, `linkLabel` from Task 2; `signals.isFull` from Task 1.
 - Produces: `formatScored(scored, variant?, trustBadge?, priceView?, couponView?)` returns `{ caption, imageUrl }` where `caption` is the `ofertasTemplate` body with NO disclaimer and NO trailing extras. `variant` and `trustBadge` are accepted but ignored.
 
@@ -448,7 +485,10 @@ In `src/pipeline/formatter.service.spec.ts`, REPLACE the two `describe` blocks `
 ```ts
 describe('FormatterService.formatScored (ofertas clone)', () => {
   it('emits hashtag, uppercased hook, title, price and link — no disclaimer', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('que preço'));
+    const svc = new FormatterService(
+      makeAffiliate(),
+      makeHeadline('que preço'),
+    );
     const { caption } = await svc.formatScored(makeScored('good'));
     expect(caption.split('\n')[0]).toBe('#MercadoLivre');
     expect(caption).toContain('QUE PREÇO 🔥');
@@ -458,7 +498,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
     expect(caption).not.toMatch(/PROMOÇÃO/);
   });
 
-  it('shows à vista when no priceView, no PIX when pixPriceCents present', async () => {
+  it('shows à vista when no priceView, NO PIX when pixPriceCents present', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const noPix = await svc.formatScored(makeScored('good'));
     expect(noPix.caption).toContain('✅ R$ 100 à vista');
@@ -471,7 +511,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
       installments: null,
       scrapedAt: '2026-07-15T20:00:00.000Z',
     });
-    expect(withPix.caption).toContain('✅ R$ 87 no PIX');
+    expect(withPix.caption).toContain('✅ R$ 87 NO PIX');
   });
 
   it('renders ⚡ FULL when signals.isFull', async () => {
@@ -484,14 +524,20 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
 
   it('renders coupon code only', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
-    const { caption } = await svc.formatScored(makeScored('good'), 'A', undefined, undefined, {
-      code: 'ABC',
-      mode: 'PRICE',
-      finalCents: 8000,
-      discountLabel: '-R$ 20',
-      minCents: null,
-      validUntil: '2999-01-01T00:00:00.000Z',
-    });
+    const { caption } = await svc.formatScored(
+      makeScored('good'),
+      'A',
+      undefined,
+      undefined,
+      {
+        code: 'ABC',
+        mode: 'PRICE',
+        finalCents: 8000,
+        discountLabel: '-R$ 20',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
+    );
     expect(caption).toContain('🎟️ Use o cupom: ABC');
     expect(caption).not.toMatch(/válido até/);
   });
@@ -597,10 +643,12 @@ git commit -m "feat(pipeline): formatScored uses ofertas clone, drops disclaimer
 ### Task 4: Rewire `formatDigest` to the clone block (drop disclaimer)
 
 **Files:**
+
 - Modify: `src/pipeline/formatter.service.ts` (`formatDigest`, `digestBlock`)
 - Test: `src/pipeline/formatter-digest.spec.ts` (rewrite expectations)
 
 **Interfaces:**
+
 - Consumes: `ofertasTemplate` from Task 2.
 - Produces: `formatDigest(entries)` returns `{ caption, imageUrl }`; each entry rendered via `ofertasTemplate`, blocks joined by `\n\n➖➖➖\n\n`, header `🔥 {n} ACHADOS NUM POST SÓ`, NO disclaimer.
 
@@ -710,12 +758,14 @@ git commit -m "feat(pipeline): formatDigest uses ofertas clone blocks, drops dis
 ### Task 5: Delete dead templates + obsolete specs; clean formatter internals
 
 **Files:**
+
 - Delete: `src/pipeline/templates/template-good.ts`, `template-top.ts`, `template-imperdivel.ts`, `variants.ts`
 - Delete: `src/pipeline/formatter-variant.spec.ts`, `src/pipeline/formatter-trust-badge.spec.ts`
 - Modify: `src/pipeline/templates/index.ts`
 - Modify: `src/pipeline/formatter.service.ts` (remove now-unused private methods + imports)
 
 **Interfaces:**
+
 - Produces: `templates/index.ts` no longer exports `templatesByLevel` / `variantBByLevel` / `ScoredCaptionTemplate`. It keeps the legacy `templates`, `fireTemplate`, and `CaptionTemplate` exports (used by `formatItem`).
 
 - [ ] **Step 1: Confirm no other importers**
@@ -792,7 +842,7 @@ Add a throwaway check (or use an existing manual harness) to print `formatScored
 ➡️ <title>
 ⚡ FULL
 
-✅ R$ <int> no PIX
+✅ R$ <int> NO PIX
 🎟️ Use o cupom: <CODE>
 🛒 Link: <link>
 ```
@@ -811,9 +861,10 @@ git commit -m "test: align remaining specs with ofertas clone caption"
 ## Self-Review
 
 **Spec coverage:**
+
 - Layout único ML+Shopee → Task 2 (`ofertasTemplate`), wired in Tasks 3-4. ✓
 - Substitui 6 templates + A/B → Task 5 deletes them; Task 3 ignores `variant`. ✓
-- Preço PIX honesto (no PIX / à vista) → Task 2 price line + Task 3 tests. ✓
+- Preço PIX honesto (NO PIX / à vista) → Task 2 price line + Task 3 tests. ✓
 - Sem disclaimer → Tasks 3 & 4 drop it. ✓
 - Hashtag por source → `sourceHashtag` Task 2. ✓
 - FULL → Task 1 plumbing + Task 2 render. ✓

@@ -43,11 +43,13 @@
 Highest-value, zero-I/O core. Everything else consumes these types + functions.
 
 **Files:**
+
 - Create: `src/coupon/coupon.types.ts`
 - Create: `src/coupon/coupon-math.ts`
 - Test: `src/coupon/coupon-math.spec.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type CouponScope = 'SELLER' | 'PRODUCT'`
   - `type CouponType = 'PERCENT' | 'FIXED'`
@@ -63,22 +65,42 @@ import { applyCoupon, computeCouponView } from './coupon-math';
 import type { Coupon } from './coupon.types';
 
 const base: Coupon = {
-  id: 'c1', code: 'ABC', scope: 'SELLER', targetId: 's1',
-  type: 'PERCENT', value: 10, capCents: null, minCents: null,
-  firstBuy: false, perUser: false,
-  validUntil: new Date('2999-01-01'), active: true, affiliateSafe: true,
+  id: 'c1',
+  code: 'ABC',
+  scope: 'SELLER',
+  targetId: 's1',
+  type: 'PERCENT',
+  value: 10,
+  capCents: null,
+  minCents: null,
+  firstBuy: false,
+  perUser: false,
+  validUntil: new Date('2999-01-01'),
+  active: true,
+  affiliateSafe: true,
 };
 const now = new Date('2026-07-15T00:00:00Z');
 
 describe('applyCoupon', () => {
   it('percent off', () => {
-    expect(applyCoupon(10000, { ...base, type: 'PERCENT', value: 10 })).toBe(9000);
+    expect(applyCoupon(10000, { ...base, type: 'PERCENT', value: 10 })).toBe(
+      9000,
+    );
   });
   it('percent capped at capCents', () => {
-    expect(applyCoupon(100000, { ...base, type: 'PERCENT', value: 10, capCents: 5000 })).toBe(95000);
+    expect(
+      applyCoupon(100000, {
+        ...base,
+        type: 'PERCENT',
+        value: 10,
+        capCents: 5000,
+      }),
+    ).toBe(95000);
   });
   it('fixed off in cents', () => {
-    expect(applyCoupon(10000, { ...base, type: 'FIXED', value: 2000 })).toBe(8000);
+    expect(applyCoupon(10000, { ...base, type: 'FIXED', value: 2000 })).toBe(
+      8000,
+    );
   });
   it('never goes below zero', () => {
     expect(applyCoupon(1000, { ...base, type: 'FIXED', value: 5000 })).toBe(0);
@@ -87,19 +109,35 @@ describe('applyCoupon', () => {
 
 describe('computeCouponView gate', () => {
   it('inactive -> null', () => {
-    expect(computeCouponView({ ...base, active: false }, 10000, now)).toBeNull();
+    expect(
+      computeCouponView({ ...base, active: false }, 10000, now),
+    ).toBeNull();
   });
   it('expired -> null', () => {
-    expect(computeCouponView({ ...base, validUntil: new Date('2020-01-01') }, 10000, now)).toBeNull();
+    expect(
+      computeCouponView(
+        { ...base, validUntil: new Date('2020-01-01') },
+        10000,
+        now,
+      ),
+    ).toBeNull();
   });
   it('firstBuy -> null (never render)', () => {
-    expect(computeCouponView({ ...base, firstBuy: true }, 10000, now)).toBeNull();
+    expect(
+      computeCouponView({ ...base, firstBuy: true }, 10000, now),
+    ).toBeNull();
   });
   it('perUser -> null (never render)', () => {
-    expect(computeCouponView({ ...base, perUser: true }, 10000, now)).toBeNull();
+    expect(
+      computeCouponView({ ...base, perUser: true }, 10000, now),
+    ).toBeNull();
   });
   it('applies -> PRICE with finalCents', () => {
-    const v = computeCouponView({ ...base, type: 'FIXED', value: 2000 }, 10000, now);
+    const v = computeCouponView(
+      { ...base, type: 'FIXED', value: 2000 },
+      10000,
+      now,
+    );
     expect(v).toMatchObject({ mode: 'PRICE', finalCents: 8000, code: 'ABC' });
   });
   it('below minimum -> CTA, no finalCents', () => {
@@ -107,14 +145,24 @@ describe('computeCouponView gate', () => {
     expect(v).toMatchObject({ mode: 'CTA', finalCents: null, minCents: 20000 });
   });
   it('at/above minimum -> PRICE', () => {
-    const v = computeCouponView({ ...base, minCents: 5000, type: 'FIXED', value: 1000 }, 10000, now);
+    const v = computeCouponView(
+      { ...base, minCents: 5000, type: 'FIXED', value: 1000 },
+      10000,
+      now,
+    );
     expect(v).toMatchObject({ mode: 'PRICE', finalCents: 9000 });
   });
   it('discountLabel percent', () => {
-    expect(computeCouponView({ ...base, type: 'PERCENT', value: 15 }, 10000, now)?.discountLabel).toBe('-15%');
+    expect(
+      computeCouponView({ ...base, type: 'PERCENT', value: 15 }, 10000, now)
+        ?.discountLabel,
+    ).toBe('-15%');
   });
   it('discountLabel fixed', () => {
-    expect(computeCouponView({ ...base, type: 'FIXED', value: 2000 }, 10000, now)?.discountLabel).toBe('-R$ 20');
+    expect(
+      computeCouponView({ ...base, type: 'FIXED', value: 2000 }, 10000, now)
+        ?.discountLabel,
+    ).toBe('-R$ 20');
   });
 });
 ```
@@ -188,7 +236,9 @@ function discountLabel(coupon: Coupon): string {
   if (coupon.type === 'PERCENT') return `-${coupon.value}%`;
   // FIXED: value is cents -> whole reais label, no decimals for round values.
   const reais = coupon.value / 100;
-  const n = Number.isInteger(reais) ? String(reais) : reais.toFixed(2).replace('.', ',');
+  const n = Number.isInteger(reais)
+    ? String(reais)
+    : reais.toFixed(2).replace('.', ',');
   return `-R$ ${n}`;
 }
 
@@ -249,10 +299,12 @@ git commit -m "feat(coupon): pure coupon math + per-deal gate"
 ### Task 2: Prisma Coupon model + repository
 
 **Files:**
+
 - Modify: `prisma/schema.prisma` (append after `AffiliateLink`)
 - Create: `src/coupon/coupon.repository.ts`
 
 **Interfaces:**
+
 - Consumes: `Coupon` (Task 1), `PrismaService` (`src/db/prisma.service.ts`).
 - Produces:
   - `class CouponRepository { findMatching(sellerId: string | null, productId: string, now: Date): Promise<Coupon[]>; create(data: Omit<Coupon, 'id'>): Promise<Coupon> }`
@@ -358,10 +410,12 @@ git commit -m "feat(coupon): Coupon prisma model + repository"
 ### Task 3: CouponService.resolveForDeal (pick best + gate)
 
 **Files:**
+
 - Create: `src/coupon/coupon.service.ts`
 - Test: `src/coupon/coupon.service.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `CouponRepository` (Task 2), `computeCouponView` (Task 1), `EnrichedDeal` (`src/sources/source.port.ts`).
 - Produces:
   - `class CouponService { resolveForDeal(deal: EnrichedDeal, priceCents: number, now?: Date): Promise<CouponView | null> }`
@@ -382,15 +436,29 @@ const mlDeal = (sellerId: string | null, mlb: string): EnrichedDeal =>
     raw: {} as any,
     seller: sellerId ? ({ externalSellerId: sellerId } as any) : null,
     condition: 'new',
-    signals: { freeShipping: false, installmentsNoInterest: false, volumeTier: 'none', isVerifiedStore: false },
+    signals: {
+      freeShipping: false,
+      installmentsNoInterest: false,
+      volumeTier: 'none',
+      isVerifiedStore: false,
+    },
     extras: {},
-  } as EnrichedDeal);
+  }) as EnrichedDeal;
 
 const coupon = (over: Partial<Coupon>): Coupon => ({
-  id: 'c', code: 'X', scope: 'SELLER', targetId: 's1',
-  type: 'FIXED', value: 1000, capCents: null, minCents: null,
-  firstBuy: false, perUser: false,
-  validUntil: new Date('2999-01-01'), active: true, affiliateSafe: true,
+  id: 'c',
+  code: 'X',
+  scope: 'SELLER',
+  targetId: 's1',
+  type: 'FIXED',
+  value: 1000,
+  capCents: null,
+  minCents: null,
+  firstBuy: false,
+  perUser: false,
+  validUntil: new Date('2999-01-01'),
+  active: true,
+  affiliateSafe: true,
   ...over,
 });
 
@@ -403,20 +471,38 @@ describe('CouponService.resolveForDeal', () => {
   it('skips non-ML deals without hitting the repo', async () => {
     const repo = { findMatching: jest.fn() } as any;
     const s = new CouponService(repo);
-    const deal = { ...mlDeal('s1', 'MLB1'), key: { source: 'shopee', externalId: '1' }, source: 'shopee' } as EnrichedDeal;
+    const deal = {
+      ...mlDeal('s1', 'MLB1'),
+      key: { source: 'shopee', externalId: '1' },
+      source: 'shopee',
+    } as EnrichedDeal;
     expect(await s.resolveForDeal(deal, 10000, now)).toBeNull();
     expect(repo.findMatching).not.toHaveBeenCalled();
   });
 
   it('returns PRICE view for a matching seller coupon', async () => {
-    const v = await svc([coupon({ type: 'FIXED', value: 2000 })]).resolveForDeal(mlDeal('s1', 'MLB1'), 10000, now);
+    const v = await svc([
+      coupon({ type: 'FIXED', value: 2000 }),
+    ]).resolveForDeal(mlDeal('s1', 'MLB1'), 10000, now);
     expect(v).toMatchObject({ mode: 'PRICE', finalCents: 8000 });
   });
 
   it('PRODUCT scope wins over SELLER scope', async () => {
     const v = await svc([
-      coupon({ scope: 'SELLER', targetId: 's1', type: 'FIXED', value: 1000, code: 'SELL' }),
-      coupon({ scope: 'PRODUCT', targetId: 'MLB1', type: 'FIXED', value: 500, code: 'PROD' }),
+      coupon({
+        scope: 'SELLER',
+        targetId: 's1',
+        type: 'FIXED',
+        value: 1000,
+        code: 'SELL',
+      }),
+      coupon({
+        scope: 'PRODUCT',
+        targetId: 'MLB1',
+        type: 'FIXED',
+        value: 500,
+        code: 'PROD',
+      }),
     ]).resolveForDeal(mlDeal('s1', 'MLB1'), 10000, now);
     expect(v?.code).toBe('PROD');
   });
@@ -430,7 +516,11 @@ describe('CouponService.resolveForDeal', () => {
   });
 
   it('returns null when all matches gate out', async () => {
-    const v = await svc([coupon({ firstBuy: true })]).resolveForDeal(mlDeal('s1', 'MLB1'), 10000, now);
+    const v = await svc([coupon({ firstBuy: true })]).resolveForDeal(
+      mlDeal('s1', 'MLB1'),
+      10000,
+      now,
+    );
     expect(v).toBeNull();
   });
 });
@@ -506,12 +596,14 @@ git commit -m "feat(coupon): CouponService.resolveForDeal with scope/best select
 ### Task 4: DTO + controller + module wiring
 
 **Files:**
+
 - Create: `src/coupon/dto/create-coupon.dto.ts`
 - Create: `src/coupon/coupon.controller.ts`
 - Create: `src/coupon/coupon.module.ts`
 - Modify: `src/app.module.ts` (add `CouponModule` to `imports`)
 
 **Interfaces:**
+
 - Consumes: `CouponService`/`CouponRepository` (Tasks 2-3), `ApiKeyGuard` (`src/auth/api-key.guard.ts`), `PrismaModule`/`PrismaService`.
 - Produces: `POST /coupons` accepting `CreateCouponDto`, returning the created `Coupon`. `CouponModule` exports `CouponService`.
 
@@ -519,43 +611,61 @@ git commit -m "feat(coupon): CouponService.resolveForDeal with scope/best select
 
 ```ts
 import {
-  IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, IsString, Max, Min, MinLength,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  MinLength,
 } from 'class-validator';
 
 export class CreateCouponDto {
-  @IsString() @MinLength(2)
+  @IsString()
+  @MinLength(2)
   code!: string;
 
   @IsIn(['SELLER', 'PRODUCT'])
   scope!: 'SELLER' | 'PRODUCT';
 
   /** SELLER -> ML seller id; PRODUCT -> MLB item id. */
-  @IsString() @MinLength(1)
+  @IsString()
+  @MinLength(1)
   targetId!: string;
 
   @IsIn(['PERCENT', 'FIXED'])
   type!: 'PERCENT' | 'FIXED';
 
   /** PERCENT: 1-100. FIXED: discount in cents. */
-  @IsInt() @Min(1)
+  @IsInt()
+  @Min(1)
   value!: number;
 
-  @IsOptional() @IsInt() @Min(1)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   capCents?: number;
 
-  @IsOptional() @IsInt() @Min(1)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   minCents?: number;
 
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   firstBuy?: boolean;
 
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   perUser?: boolean;
 
   @IsISO8601()
   validUntil!: string;
 
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   affiliateSafe?: boolean;
 }
 ```
@@ -564,7 +674,12 @@ export class CreateCouponDto {
 
 ```ts
 import {
-  Body, Controller, Logger, Post, UseGuards, ValidationPipe,
+  Body,
+  Controller,
+  Logger,
+  Post,
+  UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CouponRepository } from './coupon.repository';
@@ -588,7 +703,9 @@ export class CouponController {
       );
     }
     if (body.type === 'PERCENT' && body.value > 100) {
-      this.logger.warn(`coupon ${body.code} PERCENT value > 100 — likely a mistake.`);
+      this.logger.warn(
+        `coupon ${body.code} PERCENT value > 100 — likely a mistake.`,
+      );
     }
     return this.repo.create({
       code: body.code,
@@ -649,11 +766,13 @@ git commit -m "feat(coupon): POST /coupons endpoint + module wiring"
 ### Task 5: Queue types + pipeline plumb (resolve at enqueue)
 
 **Files:**
+
 - Modify: `src/queue/queue.types.ts`
 - Modify: `src/pipeline/pipeline.service.ts`
 - Modify: `src/pipeline/pipeline.service.spec.ts` (constructor arg count)
 
 **Interfaces:**
+
 - Consumes: `CouponService.resolveForDeal` (Task 3), `CouponView` (Task 1).
 - Produces: `SendDealJob.couponView?: CouponView`, `DigestDealEntry.couponView?: CouponView`; pipeline injects `CouponService` as a new constructor dependency (added **last** so existing positional mocks shift predictably).
 
@@ -689,23 +808,23 @@ Add as the **last** constructor parameter (after the `priceScraper` inject):
 Right after the `priceViews` population loop (the `for (const { scored: sd } of selected)` block that ends near line 218), add a sibling map. `applyPriceView` has already mutated `sd.deal.raw.priceCents` to the scraped price, so resolve the coupon against that corrected price:
 
 ```ts
-    // Resolve one matching coupon per approved deal (format-only). Uses the
-    // corrected (post-scrape) priceCents so the gate's minimum test and the
-    // final-price math match the number shown to the user.
-    const couponViews = new Map<string, CouponView>();
-    for (const { scored: sd } of selected) {
-      try {
-        const cv = await this.coupons.resolveForDeal(
-          sd.deal,
-          sd.deal.raw.priceCents,
-        );
-        if (cv) couponViews.set(keyToString(sd.deal.key), cv);
-      } catch (err) {
-        this.logger.warn(
-          `coupon resolve failed for ${keyToString(sd.deal.key)}: ${(err as Error).message}`,
-        );
-      }
-    }
+// Resolve one matching coupon per approved deal (format-only). Uses the
+// corrected (post-scrape) priceCents so the gate's minimum test and the
+// final-price math match the number shown to the user.
+const couponViews = new Map<string, CouponView>();
+for (const { scored: sd } of selected) {
+  try {
+    const cv = await this.coupons.resolveForDeal(
+      sd.deal,
+      sd.deal.raw.priceCents,
+    );
+    if (cv) couponViews.set(keyToString(sd.deal.key), cv);
+  } catch (err) {
+    this.logger.warn(
+      `coupon resolve failed for ${keyToString(sd.deal.key)}: ${(err as Error).message}`,
+    );
+  }
+}
 ```
 
 - [ ] **Step 4: Attach `couponView` to both job shapes**
@@ -749,10 +868,12 @@ git commit -m "feat(coupon): plumb couponView through pipeline enqueue"
 ### Task 6: Formatter renders the coupon line
 
 **Files:**
+
 - Modify: `src/pipeline/formatter.service.ts`
 - Modify: `src/pipeline/formatter.service.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `CouponView` (Task 1).
 - Produces: `formatScored(scored, variant?, trustBadge?, priceView?, couponView?)` and `digestBlock(sd, variant, link, priceView?, couponView?)` gain a trailing optional `couponView`. New private `couponLine(couponView?): string | null`.
 
@@ -763,8 +884,18 @@ git commit -m "feat(coupon): plumb couponView through pipeline enqueue"
 describe('coupon line', () => {
   it('PRICE mode shows final price + code', async () => {
     const { caption } = await formatter.formatScored(
-      scoredFixture, 'A', undefined, undefined,
-      { code: 'ABC', mode: 'PRICE', finalCents: 8000, discountLabel: '-R$ 20', minCents: null, validUntil: '2999-01-01T00:00:00.000Z' },
+      scoredFixture,
+      'A',
+      undefined,
+      undefined,
+      {
+        code: 'ABC',
+        mode: 'PRICE',
+        finalCents: 8000,
+        discountLabel: '-R$ 20',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
     );
     expect(caption).toContain('🎟️');
     expect(caption).toContain('ABC');
@@ -773,8 +904,18 @@ describe('coupon line', () => {
 
   it('CTA mode shows code + threshold, no final price claim', async () => {
     const { caption } = await formatter.formatScored(
-      scoredFixture, 'A', undefined, undefined,
-      { code: 'XYZ', mode: 'CTA', finalCents: null, discountLabel: '-R$ 20', minCents: 10000, validUntil: '2999-01-01T00:00:00.000Z' },
+      scoredFixture,
+      'A',
+      undefined,
+      undefined,
+      {
+        code: 'XYZ',
+        mode: 'CTA',
+        finalCents: null,
+        discountLabel: '-R$ 20',
+        minCents: 10000,
+        validUntil: '2999-01-01T00:00:00.000Z',
+      },
     );
     expect(caption).toContain('🎟️');
     expect(caption).toContain('XYZ');
@@ -810,12 +951,12 @@ Add signature param to `formatScored` (trailing):
 Change the body assembly so the coupon line is appended right after the price extras. Replace the `injectPriceExtras(...)` assignment with:
 
 ```ts
-    let body = this.injectPriceExtras(
-      tmpl(scored, formatBRL, link, hook, trustLine),
-      priceView,
-    );
-    const cLine = this.couponLine(couponView);
-    if (cLine) body = this.appendCouponLine(body, cLine);
+let body = this.injectPriceExtras(
+  tmpl(scored, formatBRL, link, hook, trustLine),
+  priceView,
+);
+const cLine = this.couponLine(couponView);
+if (cLine) body = this.appendCouponLine(body, cLine);
 ```
 
 Add the two private helpers (place next to `priceExtraLines`):
@@ -836,7 +977,7 @@ Add the two private helpers (place next to `priceExtraLines`):
   /** Insert the coupon line right under the price block (after Pix/installments). */
   private appendCouponLine(body: string, line: string): string {
     const lines = body.split('\n');
-    let idx = lines.findIndex((l) => /no Pix|sem juros/.test(l));
+    let idx = lines.findIndex((l) => /NO PIX|sem juros/.test(l));
     if (idx === -1) idx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
     if (idx === -1) idx = lines.findIndex((l) => /R\$/.test(l));
     if (idx === -1) return [body, line].join('\n');
@@ -856,8 +997,8 @@ Add the two private helpers (place next to `priceExtraLines`):
 Thread the param through `digestBlock` too — add `couponView?: CouponView` as its trailing param, and after `lines.push(...this.priceExtraLines(priceView));` add:
 
 ```ts
-    const cLine = this.couponLine(couponView);
-    if (cLine) lines.push(cLine);
+const cLine = this.couponLine(couponView);
+if (cLine) lines.push(cLine);
 ```
 
 Then in `formatDigest`, pass it: change the `blocks` map to
@@ -881,10 +1022,12 @@ git commit -m "feat(coupon): render coupon line in single + digest captions"
 ### Task 7: Worker passes couponView + re-checks validUntil at send
 
 **Files:**
+
 - Modify: `src/worker/send-deal.worker.ts`
 - Modify: `src/worker/send-deal.worker.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `SendDealJob.couponView` (Task 5), `formatScored(... couponView)` (Task 6).
 - Produces: worker forwards `job.data.couponView` to the formatter, but drops it (passes `undefined`) when `couponView.validUntil <= now` so a queued job can't post an expired code.
 
@@ -893,18 +1036,40 @@ git commit -m "feat(coupon): render coupon line in single + digest captions"
 ```ts
 describe('coupon expiry at send', () => {
   it('forwards a still-valid couponView to the formatter', async () => {
-    const cv = { code: 'ABC', mode: 'PRICE', finalCents: 8000, discountLabel: '-R$ 20', minCents: null, validUntil: '2999-01-01T00:00:00.000Z' };
+    const cv = {
+      code: 'ABC',
+      mode: 'PRICE',
+      finalCents: 8000,
+      discountLabel: '-R$ 20',
+      minCents: null,
+      validUntil: '2999-01-01T00:00:00.000Z',
+    };
     await processJob({ ...baseJob, couponView: cv }); // baseJob = existing single-deal fixture in this file
     expect(formatScoredMock).toHaveBeenCalledWith(
-      expect.anything(), expect.anything(), expect.anything(), expect.anything(), cv,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      cv,
     );
   });
 
   it('drops an expired couponView (passes undefined)', async () => {
-    const cv = { code: 'OLD', mode: 'PRICE', finalCents: 8000, discountLabel: '-R$ 20', minCents: null, validUntil: '2000-01-01T00:00:00.000Z' };
+    const cv = {
+      code: 'OLD',
+      mode: 'PRICE',
+      finalCents: 8000,
+      discountLabel: '-R$ 20',
+      minCents: null,
+      validUntil: '2000-01-01T00:00:00.000Z',
+    };
     await processJob({ ...baseJob, couponView: cv });
     expect(formatScoredMock).toHaveBeenCalledWith(
-      expect.anything(), expect.anything(), expect.anything(), expect.anything(), undefined,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      undefined,
     );
   });
 });
@@ -922,19 +1087,19 @@ Expected: FAIL — formatter called without the 5th arg.
 In `src/worker/send-deal.worker.ts`, where it calls `formatScored(...)` for a single deal, compute a guarded value and pass it as the trailing arg:
 
 ```ts
-    const couponView =
-      job.data.couponView &&
-      new Date(job.data.couponView.validUntil).getTime() > Date.now()
-        ? job.data.couponView
-        : undefined;
+const couponView =
+  job.data.couponView &&
+  new Date(job.data.couponView.validUntil).getTime() > Date.now()
+    ? job.data.couponView
+    : undefined;
 
-    const { caption, imageUrl } = await this.formatter.formatScored(
-      job.data.scored,
-      job.data.variant,
-      job.data.trustBadge,
-      job.data.priceView,
-      couponView,
-    );
+const { caption, imageUrl } = await this.formatter.formatScored(
+  job.data.scored,
+  job.data.variant,
+  job.data.trustBadge,
+  job.data.priceView,
+  couponView,
+);
 ```
 
 For the digest path (`send-digest`), map the same guard per entry when building the `entries` passed to `formatDigest`:

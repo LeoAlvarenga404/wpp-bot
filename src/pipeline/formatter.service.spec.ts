@@ -201,7 +201,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
     expect(caption).not.toMatch(/PROMOÇÃO/);
   });
 
-  it('shows à vista when no priceView, no PIX when pixPriceCents present', async () => {
+  it('shows à vista when no priceView, NO PIX when pixPriceCents present', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const noPix = await svc.formatScored(makeScored('good'));
     expect(noPix.caption).toContain('✅ R$ 100 à vista');
@@ -214,7 +214,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
       installments: null,
       scrapedAt: '2026-07-15T20:00:00.000Z',
     });
-    expect(withPix.caption).toContain('✅ R$ 87 no PIX');
+    expect(withPix.caption).toContain('✅ R$ 87 NO PIX');
   });
 
   it('renders ⚡ FULL when signals.isFull', async () => {

@@ -12,6 +12,7 @@ todo post do bot saia com o mesmo layout flat.
 ## Formato de referência (observado)
 
 ML:
+
 ```
 #MercadoLivre
 PRA DAR AQUELE TALENTO NA BARBA OU CABELO 🔥
@@ -32,7 +33,7 @@ Sem disclaimer. Sem frete grátis, De/Por, badge de confiança, histórico, sell
 
 1. **Substitui tudo.** Um único template flat para ML + Shopee. Mata os 6
    templates (good/top/super × A/B). Nível só muda o emoji do hook.
-2. **Preço "no PIX" honesto.** Tem `priceView.pixPriceCents` → `✅ R$ X no PIX`.
+2. **Preço "NO PIX" honesto.** Tem `priceView.pixPriceCents` → `✅ R$ X NO PIX`.
    Não tem → `✅ R$ X à vista` (mesmo emoji verde, sem claim falso de PIX).
 3. **Sem disclaimer.** Usuário assumiu (compliance de afiliado). Removido de
    `formatScored` e `formatDigest`.
@@ -49,7 +50,7 @@ Sem disclaimer. Sem frete grátis, De/Por, badge de confiança, histórico, sell
 ➡️ {título}
 ⚡ FULL                          ← só se signals.isFull
 
-✅ R$ {int} no PIX               ← pixPrice presente
+✅ R$ {int} NO PIX               ← pixPrice presente
 ✅ R$ {int} à vista              ← fallback sem pixPrice
 🎟️ Use o cupom: {code}          ← só se couponView
 🛒 {linkLabel} {link}            ← "Link:" (ml) | "Link do produto:" (shopee)
@@ -64,14 +65,15 @@ Sem disclaimer. Sem frete grátis, De/Por, badge de confiança, histórico, sell
 
 ## Plumbing do FULL (4 arquivos)
 
-| Arquivo | Mudança |
-|---|---|
-| `src/mercado-livre/ml.service.ts` (`tryBuildDeal`, ~l.78) | `DealItem` recebe `isFull: best.shipping?.logistic_type === 'fulfillment'` |
-| `src/mercado-livre/types.ts` | `DealItem.isFull: boolean` |
+| Arquivo                                                   | Mudança                                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `src/mercado-livre/ml.service.ts` (`tryBuildDeal`, ~l.78) | `DealItem` recebe `isFull: best.shipping?.logistic_type === 'fulfillment'`            |
+| `src/mercado-livre/types.ts`                              | `DealItem.isFull: boolean`                                                            |
 | `src/sources/mercado-livre/mapping.ts` (`toEnrichedDeal`) | popula `signals.isFull` a partir de `DealItem`; `fallbackDealItem` e Shopee = `false` |
-| `src/sources/source.port.ts` | `EnrichedDeal.signals.isFull: boolean` (obrigatório) |
+| `src/sources/source.port.ts`                              | `EnrichedDeal.signals.isFull: boolean` (obrigatório)                                  |
 
 Notas:
+
 - `isFull` obrigatório em `signals` → todos os fixtures/specs que constroem
   `signals` precisam adicionar `isFull` (o TS força).
 - `ml-source.service.ts` propaga `dealItems[i].isFull` no `toEnrichedDeal` (hoje
@@ -82,22 +84,26 @@ Notas:
 ## Arquivos removidos / reescritos
 
 **Remove:**
+
 - `src/pipeline/templates/template-good.ts`
 - `src/pipeline/templates/template-top.ts`
 - `src/pipeline/templates/template-imperdivel.ts`
 - `src/pipeline/templates/variants.ts` (A/B)
 
 **Novo:**
+
 - `src/pipeline/templates/template-ofertas.ts` — layout acima. Assinatura recebe
   `ScoredDeal`, `formatBRL`/helpers, `link`, `hook`, `priceView`, `couponView`.
 - Helpers `sourceHashtag(source)` e `linkLabel(source)` (no template ou em
   `templates/index.ts`).
 
 **`src/pipeline/templates/index.ts`:**
+
 - Remove `templatesByLevel` / re-exports de good/top/imperdivel.
 - Exporta o template único.
 
 **`src/pipeline/formatter.service.ts`:**
+
 - `formatScored`: usa o template único; **ignora `variant`** (param mantido na
   assinatura como no-op p/ não quebrar o worker); dropa `disclaimerLine()`;
   move a lógica de preço PIX/à-vista e cupom-só-código pra cá ou pro template.
@@ -120,6 +126,7 @@ Notas:
 ## Testes (TDD)
 
 Specs que quebram e precisam reescrita pro novo formato:
+
 - `formatter.service.spec.ts` (layout, disclaimer removido, preço PIX/à vista)
 - `formatter-digest.spec.ts`
 - `formatter-variant.spec.ts` (A/B) → simplifica/remove (variant no-op)
@@ -127,6 +134,7 @@ Specs que quebram e precisam reescrita pro novo formato:
 - specs de template good/top/imperdivel → removidos com os arquivos
 
 Novos:
+
 - `template-ofertas.spec.ts`: hashtag por source, título `➡️`, FULL on/off,
   preço PIX vs à vista, cupom só-código, label de link ML vs Shopee, sem disclaimer,
   emoji de hook por nível, hook uppercased, hook ausente omite linha.
@@ -137,6 +145,6 @@ Novos:
 
 - **Disclaimer removido** = decisão do usuário (compliance de afiliado).
 - **A/B efetivamente morto** para medição (escolha "substitui tudo").
-- **Claim "no PIX"** protegido: só quando o scraper entregou `pixPriceCents`.
+- **Claim "NO PIX"** protegido: só quando o scraper entregou `pixPriceCents`.
 - **Fora de escopo:** cupom Shopee via link de resgate (sem API — fase 2), fonte
   Amazon (não existe), rip total do plumbing A/B.

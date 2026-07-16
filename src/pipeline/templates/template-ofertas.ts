@@ -54,7 +54,7 @@ export function ofertasTemplate(input: OfertasTemplateInput): string {
 
   const pix = priceView?.pixPriceCents ?? null;
   const displayCents = pix ?? priceView?.priceCents ?? raw.priceCents;
-  const priceLabel = pix != null ? 'no PIX' : 'à vista';
+  const priceLabel = pix != null ? 'NO PIX' : 'à vista';
   lines.push(`✅ ${priceIntBRL(displayCents)} ${priceLabel}`);
 
   if (couponView) lines.push(`🎟️ Use o cupom: ${couponView.code}`);

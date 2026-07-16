@@ -73,7 +73,7 @@ describe('ofertasTemplate', () => {
     expect(out).not.toMatch(/Link de afiliado/);
   });
 
-  it('shows "no PIX" with the pix price when priceView has one', () => {
+  it('shows "NO PIX" with the pix price when priceView has one', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 10000 }),
       link: 'l',
@@ -87,7 +87,7 @@ describe('ofertasTemplate', () => {
         scrapedAt: '2026-07-15T20:00:00.000Z',
       },
     });
-    expect(out).toContain('✅ R$ 87 no PIX');
+    expect(out).toContain('✅ R$ 87 NO PIX');
     expect(out).not.toContain('à vista');
   });
 
