@@ -18,7 +18,12 @@ import { JudgeVerdictCache } from './verdict-cache';
         config: ConfigService,
         deepseek: DeepSeekJudgeAdapter,
         noop: NoopJudge,
-      ) => ((config.get<string>('DEEPSEEK_API_KEY') ?? '') ? deepseek : noop),
+      ) => {
+        const enabled =
+          (config.get<string>('JUDGE_ENABLED') ?? 'true') !== 'false';
+        const hasKey = (config.get<string>('DEEPSEEK_API_KEY') ?? '') !== '';
+        return enabled && hasKey ? deepseek : noop;
+      },
       inject: [ConfigService, DeepSeekJudgeAdapter, NoopJudge],
     },
   ],
