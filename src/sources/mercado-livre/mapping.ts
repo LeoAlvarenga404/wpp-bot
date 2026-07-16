@@ -67,6 +67,7 @@ export function toEnrichedDeal(
   seller: SellerInfo | null,
   item: ItemDetails | null,
   freeShipping: boolean,
+  isFull = false,
 ): EnrichedDeal {
   const normalizedSeller = seller ? toNormalizedSeller(seller) : null;
   const condition = mapCondition(item?.condition);
@@ -85,6 +86,7 @@ export function toEnrichedDeal(
       installmentsNoInterest,
       volumeTier,
       isVerifiedStore,
+      isFull,
     },
     extras: {
       powerSellerStatus: seller?.powerSellerStatus ?? null,

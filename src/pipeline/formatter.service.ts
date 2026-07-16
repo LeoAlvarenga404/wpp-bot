@@ -10,8 +10,9 @@ import type { TrustBadge } from '../queue/queue.types';
 import type { RawDeal } from '../sources/source.port';
 import type { PriceView } from '../pricing/price-view';
 import type { CouponView } from '../coupon/coupon.types';
-import { CaptionTemplate, templates, templatesByLevel } from './templates';
-import { variantBByLevel } from './templates/variants';
+import { templates } from './templates';
+import type { CaptionTemplate } from './templates';
+import { ofertasTemplate } from './templates/template-ofertas';
 
 function scoredDealToHeadlineItem(scored: ScoredDeal): DealItem {
   const raw = scored.deal.raw;
@@ -81,8 +82,8 @@ export class FormatterService {
 
   async formatScored(
     scored: ScoredDeal,
-    variant: CopyVariant = 'A',
-    trustBadge?: TrustBadge,
+    _variant: CopyVariant = 'A',
+    _trustBadge?: TrustBadge,
     priceView?: PriceView,
     couponView?: CouponView,
   ): Promise<{ caption: string; imageUrl: string }> {
@@ -92,107 +93,21 @@ export class FormatterService {
       this.resolveLink(raw),
       this.headline.generate(headlineItem),
     ]);
-    const formatBRL = (n: number) => this.formatBRL(n);
-
-    // 'rejected' level never reaches dispatch; fall back to good template defensively.
-    const level =
-      scored.level === 'super' || scored.level === 'top'
-        ? scored.level
-        : 'good';
-    const byLevel = variant === 'B' ? variantBByLevel : templatesByLevel;
-    const tmpl = byLevel[level];
-
-    const trustLine = trustBadge
-      ? `${trustBadge.label} ✓ monitorado há ${trustBadge.monitoredDays} dias`
-      : null;
-
-    let body = this.injectPriceExtras(
-      tmpl(scored, formatBRL, link, hook, trustLine),
+    const caption = ofertasTemplate({
+      sd: scored,
+      link,
+      hook,
       priceView,
-    );
-    const cLine = this.couponLine(couponView);
-    if (cLine) body = this.appendCouponLine(body, cLine);
-    const caption = `${body}\n\n${this.disclaimerLine()}`;
+      couponView,
+    });
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
   }
 
   /**
-   * Insert the Pix price and no-interest installments lines right under the
-   * price line of any template (matched by the "(-N%)" discount tag). Keeps
-   * templates untouched. No-op when priceView is absent (API-price fallback).
-   */
-  private injectPriceExtras(body: string, priceView?: PriceView): string {
-    const extras = this.priceExtraLines(priceView);
-    if (extras.length === 0) return body;
-    const lines = body.split('\n');
-    let idx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
-    if (idx === -1) idx = lines.findIndex((l) => /R\$/.test(l));
-    if (idx === -1) {
-      // No price line found — append after the title-ish first block.
-      return [body, ...extras].join('\n');
-    }
-    lines.splice(idx + 1, 0, ...extras);
-    return lines.join('\n');
-  }
-
-  private priceExtraLines(priceView?: PriceView): string[] {
-    if (!priceView) return [];
-    const out: string[] = [];
-    if (
-      priceView.pixPriceCents != null &&
-      priceView.pixPriceCents < priceView.priceCents
-    ) {
-      out.push(`💠 ${this.formatBRL(priceView.pixPriceCents / 100)} no Pix`);
-    }
-    const inst = priceView.installments;
-    if (inst && inst.noInterest) {
-      out.push(
-        `💳 ou ${inst.count}x de ${this.formatBRL(inst.amountCents / 100)} sem juros`,
-      );
-    }
-    return out;
-  }
-
-  /** One coupon line for the caption, or null (ml-coupons-v1). */
-  private couponLine(cv?: CouponView): string | null {
-    if (!cv) return null;
-    const until = this.formatUntil(cv.validUntil);
-    if (cv.mode === 'PRICE' && cv.finalCents != null) {
-      return `🎟️ Com cupom *${cv.code}*: ${this.formatBRL(cv.finalCents / 100)} (válido até ${until})`;
-    }
-    // CTA (below minimum) — no price claim.
-    const min =
-      cv.minCents != null
-        ? ` (acima de ${this.formatBRL(cv.minCents / 100)})`
-        : '';
-    return `🎟️ Cupom *${cv.code}* ${cv.discountLabel}${min} — válido até ${until}`;
-  }
-
-  /** Insert the coupon line right under the price block (after Pix/installments). */
-  private appendCouponLine(body: string, line: string): string {
-    const lines = body.split('\n');
-    let idx = lines.findIndex((l) => /no Pix|sem juros/.test(l));
-    if (idx === -1) idx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
-    if (idx === -1) idx = lines.findIndex((l) => /R\$/.test(l));
-    if (idx === -1) return [body, line].join('\n');
-    lines.splice(idx + 1, 0, line);
-    return lines.join('\n');
-  }
-
-  private formatUntil(iso: string): string {
-    const d = new Date(iso);
-    return d.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      timeZone: process.env.TZ ?? 'America/Sao_Paulo',
-    });
-  }
-
-  /**
-   * One WA message bundling several approved deals. Header + one compact
-   * block per deal + single disclaimer. Image comes from the first entry
-   * (gate returns deals sorted by score desc).
+   * One WA message bundling several approved deals. Header + one clone block
+   * per deal (no disclaimer). Image comes from the first entry (gate returns
+   * deals sorted by score desc).
    */
   async formatDigest(
     entries: Array<{
@@ -205,54 +120,29 @@ export class FormatterService {
     if (entries.length === 0) {
       throw new Error('formatDigest requires at least one deal');
     }
-    const links = await Promise.all(
-      entries.map((e) => this.resolveLink(e.scored.deal.raw)),
-    );
+    const [links, hooks] = await Promise.all([
+      Promise.all(entries.map((e) => this.resolveLink(e.scored.deal.raw))),
+      Promise.all(
+        entries.map((e) =>
+          this.headline.generate(scoredDealToHeadlineItem(e.scored)),
+        ),
+      ),
+    ]);
     const blocks = entries.map((e, i) =>
-      this.digestBlock(e.scored, e.variant, links[i], e.priceView, e.couponView),
+      ofertasTemplate({
+        sd: e.scored,
+        link: links[i],
+        hook: hooks[i],
+        priceView: e.priceView,
+        couponView: e.couponView,
+      }),
     );
     const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
-    const caption = [
-      header,
-      '',
-      blocks.join('\n\n➖➖➖\n\n'),
-      '',
-      this.disclaimerLine(),
-    ].join('\n');
+    const caption = [header, '', blocks.join('\n\n➖➖➖\n\n')].join('\n');
     const imageUrl = this.toHiResImage(
       entries[0].scored.deal.raw.thumbnail || '',
     );
     return { caption, imageUrl };
-  }
-
-  private digestBlock(
-    sd: ScoredDeal,
-    variant: CopyVariant,
-    link: string,
-    priceView?: PriceView,
-    couponView?: CouponView,
-  ): string {
-    const raw = sd.deal.raw;
-    const emoji =
-      sd.level === 'super' ? '🚨' : sd.level === 'top' ? '🔥' : '✅';
-    const price = raw.priceCents / 100;
-    const original =
-      raw.originalPriceCents != null ? raw.originalPriceCents / 100 : null;
-    const lines = [`${emoji} *${raw.title}*`];
-    if (variant === 'B' && original != null && original > price) {
-      lines.push(`❌ De: ~${this.formatBRL(original)}~`);
-      lines.push(
-        `✅ Por: *${this.formatBRL(price)}* (-${raw.discountPercent}%)`,
-      );
-    } else {
-      lines.push(`💰 *${this.formatBRL(price)}* (-${raw.discountPercent}%)`);
-    }
-    lines.push(...this.priceExtraLines(priceView));
-    const cLine = this.couponLine(couponView);
-    if (cLine) lines.push(cLine);
-    if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
-    lines.push(`👉 ${link}`);
-    return lines.join('\n');
   }
 
   /**

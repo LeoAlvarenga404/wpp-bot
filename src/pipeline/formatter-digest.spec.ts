@@ -50,8 +50,8 @@ function makeFormatter() {
   };
 }
 
-describe('FormatterService.formatDigest', () => {
-  it('renders one block per deal, links resolved, single disclaimer', async () => {
+describe('FormatterService.formatDigest (ofertas clone)', () => {
+  it('renders one clone block per deal, links resolved, header, no disclaimer', async () => {
     const { formatter, affiliate } = makeFormatter();
     const entries = [
       { scored: makeScored('MLB1', 'super'), variant: 'A' as const },
@@ -61,20 +61,21 @@ describe('FormatterService.formatDigest', () => {
 
     const { caption, imageUrl } = await formatter.formatDigest(entries);
 
-    expect(caption).toContain('3 ACHADOS');
-    expect(caption).toContain('Produto MLB1');
-    expect(caption).toContain('Produto MLB2');
-    expect(caption).toContain('Produto MLB3');
-    expect(caption).toContain('aff:https://ml/MLB1');
-    expect(caption).toContain('aff:https://ml/MLB3');
+    expect(caption).toContain('🔥 3 ACHADOS NUM POST SÓ');
+    expect(caption).toContain('➖➖➖');
+    expect(caption).toContain('➡️ Produto MLB1');
+    expect(caption).toContain('➡️ Produto MLB2');
+    expect(caption).toContain('➡️ Produto MLB3');
+    expect(caption).toContain('🛒 Link: aff:https://ml/MLB1');
+    expect(caption).toContain('🛒 Link: aff:https://ml/MLB3');
     expect(affiliate.resolve).toHaveBeenCalledTimes(3);
-    // disclaimer única, no fim
-    expect(caption.match(/Link de afiliado/g)).toHaveLength(1);
+    // sem disclaimer
+    expect(caption).not.toMatch(/Link de afiliado/);
     // imagem = oferta top (primeira da lista, gate já ordena por score)
     expect(imageUrl).toBe('https://t/-F.jpg');
   });
 
-  it('shopee deals use the feed permalink as-is (no affiliate resolve)', async () => {
+  it('shopee deals use the feed permalink as-is + Shopee link label', async () => {
     const { formatter, affiliate } = makeFormatter();
     const shopee = makeScored('77', 'good');
     (shopee.deal as any).key = { source: 'shopee', externalId: '77' };
@@ -86,20 +87,31 @@ describe('FormatterService.formatDigest', () => {
       { scored: makeScored('MLB1', 'top'), variant: 'A' as const },
     ]);
 
-    expect(caption).toContain('https://s.shopee.com.br/aff77');
-    expect(caption).toContain('aff:https://ml/MLB1');
+    expect(caption).toContain(
+      '🛒 Link do produto: https://s.shopee.com.br/aff77',
+    );
+    expect(caption).toContain('🛒 Link: aff:https://ml/MLB1');
     expect(affiliate.resolve).toHaveBeenCalledTimes(1); // só o deal ML
   });
 
-  it('variant B block uses De/Por anchor; variant A does not', async () => {
+  it('threads couponView code into a digest block', async () => {
     const { formatter } = makeFormatter();
     const { caption } = await formatter.formatDigest([
-      { scored: makeScored('MLB1', 'top'), variant: 'B' as const },
+      {
+        scored: makeScored('MLB1', 'top'),
+        variant: 'A' as const,
+        couponView: {
+          code: 'DIGCUP',
+          mode: 'PRICE',
+          finalCents: 9000,
+          discountLabel: '-10%',
+          minCents: null,
+          validUntil: '2999-01-01T00:00:00.000Z',
+        },
+      },
       { scored: makeScored('MLB2', 'good'), variant: 'A' as const },
     ]);
 
-    expect(caption).toContain('❌ De:');
-    // bloco A: preço direto com 💰
-    expect(caption).toContain('💰');
+    expect(caption).toContain('🎟️ Use o cupom: DIGCUP');
   });
 });

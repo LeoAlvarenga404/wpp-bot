@@ -47,4 +47,6 @@ export interface DealItem {
   freeShipping: boolean;
   permalink: string;
   discountPercent: number;
+  /** ML fulfillment (logistic_type === 'fulfillment'). */
+  isFull?: boolean;
 }
