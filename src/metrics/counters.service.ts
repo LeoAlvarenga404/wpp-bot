@@ -22,6 +22,8 @@ export class CountersService {
   public readonly judgeReject: Counter<string>;
   public readonly judgeError: Counter<string>;
   public readonly headlineFrameUsed: Counter<string>;
+  public readonly redirectClick: Counter<string>;
+  public readonly stalePriceDrop: Counter<string>;
   public readonly baileysConnected: Gauge<string>;
 
   constructor() {
@@ -97,6 +99,18 @@ export class CountersService {
       name: 'headline_frame_used_total',
       help: 'Headlines generated per LLM style frame (observability for weight tuning)',
       labelNames: ['frame'],
+      registers: [this.register],
+    });
+
+    this.redirectClick = new Counter({
+      name: 'redirect_click_total',
+      help: 'Short-link redirects served (CTR clicks on GET /r/:code)',
+      registers: [this.register],
+    });
+
+    this.stalePriceDrop = new Counter({
+      name: 'send_stale_price_drop_total',
+      help: 'Deals discarded at send time: job older than SEND_MAX_JOB_AGE_MIN and the price re-scrape failed or returned no price',
       registers: [this.register],
     });
 

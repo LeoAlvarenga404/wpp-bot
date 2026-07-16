@@ -5,12 +5,22 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { PrismaClient } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
+import { CouponService } from '../coupon/coupon.service';
+import type { CouponView } from '../coupon/coupon.types';
 import { PrismaService } from '../db/prisma.service';
+import type { ScoredDeal } from '../deal-score/types';
 import { DedupService } from '../dedup/dedup.service';
 import { CountersService } from '../metrics/counters.service';
 import { FormatterService } from '../pipeline/formatter.service';
+import {
+  PRICE_SCRAPER_PORT,
+  type PriceScraperPort,
+} from '../pricing/price-scraper.port';
+import type { PriceView } from '../pricing/price-view';
 import { PublisherRegistry } from '../publisher/publisher-registry.service';
 import {
   SEND_DEAL_QUEUE,
@@ -31,11 +41,30 @@ import { keyToString } from '../sources/source.port';
  * window will reopen within minutes. Other errors (formatter failure, fatal
  * WhatsApp errors) likewise fail and retry; if they exhaust attempts BullMQ
  * keeps them in the dead-letter set for inspection.
+ *
+ * Stale-price re-check: a job can sit in the queue for hours (quiet hours,
+ * retries). When it is older than SEND_MAX_JOB_AGE_MIN minutes the price is
+ * re-scraped at send time — observed price always beats the estimate frozen
+ * at enqueue. If the re-scrape fails the deal is DISCARDED silently (never
+ * publish a price we can't confirm) and `stalePriceDrop` is incremented.
+ *
+ * WA jitter: consecutive WhatsApp publishes are spaced by a random
+ * human-like pause (WA_JITTER_MIN_MS..WA_JITTER_MAX_MS). Telegram is a bot
+ * API — no jitter needed.
  */
 @Injectable()
 export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SendDealWorker.name);
   private worker: Worker<SendJob> | null = null;
+
+  /** Epoch ms of the last successful WA publish from this instance. */
+  private lastWaPublishAt: number | null = null;
+
+  // Seams for unit tests (overridden so specs never actually wait).
+  protected sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  protected random: () => number = Math.random;
+  protected now: () => number = Date.now;
 
   constructor(
     @Inject('REDIS_CONNECTION_OPTIONS')
@@ -45,7 +74,21 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     private readonly dedup: DedupService,
     private readonly prisma: PrismaService,
     private readonly counters: CountersService,
+    private readonly config: ConfigService,
+    @Inject(PRICE_SCRAPER_PORT)
+    private readonly priceScraper: PriceScraperPort,
+    private readonly coupons: CouponService,
   ) {}
+
+  /**
+   * PrismaService deliberately erases the generated client types (see the
+   * header comment in src/db/prisma.service.ts). The client has been
+   * generated in this repo, so re-assert the real type once here — typed
+   * model access below, no `any`.
+   */
+  private get db(): PrismaClient {
+    return this.prisma as unknown as PrismaClient;
+  }
 
   async onModuleInit(): Promise<void> {
     this.worker = new Worker<SendJob>(
@@ -93,26 +136,68 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
 
   private async processDigest(job: Job<SendDigestJob>): Promise<void> {
     const { targetJid, deals, digestId } = job.data;
+    const stale = this.isStale(job);
+
+    const sendable: Array<{
+      catalogKey: string;
+      variant: 'A' | 'B';
+      scored: ScoredDeal;
+      priceView?: PriceView;
+      couponView?: CouponView;
+    }> = [];
+    for (const d of deals) {
+      if (!stale) {
+        sendable.push({
+          ...d,
+          // Re-check coupon validity at send time — never post a stale code
+          // (ml-coupons-v1).
+          couponView:
+            d.couponView &&
+            new Date(d.couponView.validUntil).getTime() > this.now()
+              ? d.couponView
+              : undefined,
+        });
+        continue;
+      }
+      const fresh = await this.refreshPrice(d.scored);
+      if (!fresh) {
+        this.counters.stalePriceDrop.inc();
+        this.logger.warn(
+          `send-digest job ${job.id}: dropped ${d.catalogKey} — stale price re-check failed`,
+        );
+        continue;
+      }
+      sendable.push({
+        ...d,
+        priceView: fresh.priceView,
+        couponView: fresh.couponView,
+      });
+    }
+
+    if (sendable.length === 0) {
+      this.logger.warn(
+        `send-digest job ${job.id} discarded entirely: stale price re-check failed for all ${deals.length} deal(s)`,
+      );
+      return;
+    }
 
     const publisher = this.publishers.get('wa');
     const { caption, imageUrl } = await this.formatter.formatDigest(
-      deals.map((d) => ({
+      sendable.map((d) => ({
         scored: d.scored,
         variant: d.variant,
         priceView: d.priceView,
-        couponView:
-          d.couponView &&
-          new Date(d.couponView.validUntil).getTime() > Date.now()
-            ? d.couponView
-            : undefined,
+        couponView: d.couponView,
       })),
     );
+    await this.waJitter();
     await publisher.publish({ caption, imageUrl }, targetJid);
+    this.lastWaPublishAt = this.now();
 
-    for (const d of deals) {
+    for (const d of sendable) {
       await this.dedup.markPosted(d.catalogKey);
       try {
-        await (this.prisma as any).sentMessage.create({
+        await this.db.sentMessage.create({
           data: {
             catalogId: d.catalogKey,
             targetJid,
@@ -129,7 +214,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.logger.log(
-      `send-digest job ${job.id} ok (${deals.length} deals -> ${targetJid})`,
+      `send-digest job ${job.id} ok (${sendable.length}/${deals.length} deals -> ${targetJid})`,
     );
   }
 
@@ -140,25 +225,42 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
 
     const variant = job.data.variant ?? 'A';
     const publisher = this.publishers.get(channel);
+    let priceView = job.data.priceView;
     // Re-check coupon validity at send time — a job can sit in the queue past
     // the coupon's expiry; never post a stale code (ml-coupons-v1).
-    const couponView =
+    let couponView =
       job.data.couponView &&
-      new Date(job.data.couponView.validUntil).getTime() > Date.now()
+      new Date(job.data.couponView.validUntil).getTime() > this.now()
         ? job.data.couponView
         : undefined;
+
+    if (this.isStale(job)) {
+      const fresh = await this.refreshPrice(scored);
+      if (!fresh) {
+        this.counters.stalePriceDrop.inc();
+        this.logger.warn(
+          `send-deal job ${job.id} discarded: stale price re-check failed (${keyStr})`,
+        );
+        return;
+      }
+      priceView = fresh.priceView;
+      couponView = fresh.couponView;
+    }
+
     const { caption, imageUrl } = await this.formatter.formatScored(
       scored,
       variant,
       job.data.trustBadge,
-      job.data.priceView,
+      priceView,
       couponView,
     );
+    if (channel === 'wa') await this.waJitter();
     await publisher.publish({ caption, imageUrl }, targetJid);
+    if (channel === 'wa') this.lastWaPublishAt = this.now();
 
     await this.dedup.markPosted(keyStr);
     try {
-      await (this.prisma as any).sentMessage.create({
+      await this.db.sentMessage.create({
         data: { catalogId: keyStr, targetJid, caption, variant },
       });
     } catch (err) {
@@ -170,6 +272,82 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `send-deal job ${job.id} ok (${keyStr} -> ${targetJid} via ${channel}, level=${scored.level}, score=${scored.score})`,
     );
+  }
+
+  /** True when the job waited in the queue longer than SEND_MAX_JOB_AGE_MIN. */
+  private isStale(job: Job<SendJob>): boolean {
+    const ts = job.timestamp;
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) return false;
+    const maxAgeMs = this.envInt('SEND_MAX_JOB_AGE_MIN', 10) * 60_000;
+    return this.now() - ts > maxAgeMs;
+  }
+
+  /**
+   * Re-scrape the displayed price and recompute the coupon line against it.
+   * Returns null when the deal must be discarded (scrape failed / no price).
+   * On success the deal's raw price fields are corrected in place, mirroring
+   * PipelineService.applyPriceView — observed price always beats estimated.
+   */
+  private async refreshPrice(scored: ScoredDeal): Promise<{
+    priceView: PriceView;
+    couponView?: CouponView;
+  } | null> {
+    const raw = scored.deal.raw;
+    let view: PriceView | null = null;
+    try {
+      view = await this.priceScraper.scrapePriceView(raw.permalink);
+    } catch (err) {
+      // Port contract says never throw, but a discarded deal must never
+      // depend on that.
+      this.logger.warn(
+        `stale price re-scrape threw for ${keyToString(scored.deal.key)}: ${(err as Error).message}`,
+      );
+      view = null;
+    }
+    if (!view || typeof view.priceCents !== 'number') return null;
+
+    raw.priceCents = view.priceCents;
+    if (view.originalPriceCents != null) {
+      raw.originalPriceCents = view.originalPriceCents;
+    }
+    if (view.discountPercent != null) {
+      raw.discountPercent = view.discountPercent;
+    }
+
+    let couponView: CouponView | undefined;
+    try {
+      couponView =
+        (await this.coupons.resolveForDeal(scored.deal, view.priceCents)) ??
+        undefined;
+    } catch (err) {
+      this.logger.warn(
+        `coupon re-resolve failed for ${keyToString(scored.deal.key)}: ${(err as Error).message}`,
+      );
+      couponView = undefined;
+    }
+    return { priceView: view, couponView };
+  }
+
+  /**
+   * Human-like pause between consecutive WA publishes. Picks a random target
+   * gap in [WA_JITTER_MIN_MS, WA_JITTER_MAX_MS] and sleeps only the part not
+   * already covered by naturally elapsed time — an idle queue never waits.
+   */
+  private async waJitter(): Promise<void> {
+    if (this.lastWaPublishAt == null) return;
+    const min = this.envInt('WA_JITTER_MIN_MS', 30_000);
+    const max = Math.max(min, this.envInt('WA_JITTER_MAX_MS', 120_000));
+    const target = min + this.random() * (max - min);
+    const wait = Math.round(target - (this.now() - this.lastWaPublishAt));
+    if (wait > 0) await this.sleep(wait);
+  }
+
+  /** Integer env via ConfigService with a default for absent/garbage values. */
+  private envInt(name: string, dflt: number): number {
+    const raw = this.config.get<string>(name);
+    if (raw == null || raw === '') return dflt;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : dflt;
   }
 
   /** Map BullMQ error messages to short labels for Prometheus. */
