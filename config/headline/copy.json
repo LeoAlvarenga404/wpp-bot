@@ -1,161 +1,352 @@
 {
+  "version": "2.0.0",
+  "locale": "pt-BR",
+  "channel": "WHATSAPP_GROUP",
+  "audience": "BRAZIL_NATIONAL_WITH_LIGHT_SAO_PAULO_CADENCE",
+  "inputContract": {
+    "required": ["productName", "priceBRL"],
+    "productName": {
+      "type": "string",
+      "description": "Nome de catálogo do produto, possivelmente com marca, modelo e características."
+    },
+    "priceBRL": {
+      "type": "string",
+      "description": "Valor final já formatado, por exemplo R$ 89,90.",
+      "preserveExactlyWhenMentioned": true
+    }
+  },
+  "voice": {
+    "persona": "ADMIN_DE_GRUPO_EXPERIENTE",
+    "tone": ["INFORMAL", "PROXIMO", "DIRETO", "BEM_HUMORADO", "ESPONTANEO"],
+    "regionalStrategy": "PORTUGUES_INFORMAL_NACIONAL_COM_LEVE_CADENCIA_PAULISTANA",
+    "pronounPreference": ["VOCE", "SEU", "SUA", "OMISSAO_DE_PRONOME"],
+    "avoidPronouns": ["TU", "TEU", "TUA"],
+    "slangLimitPerOutput": 1,
+    "naturalnessPriority": true,
+    "avoidCaricature": true
+  },
+  "outputRules": {
+    "returnOnlyPhrase": true,
+    "oneLine": true,
+    "uppercase": true,
+    "preserveAccents": true,
+    "minWords": 5,
+    "maxWords": 15,
+    "maxExclamationMarks": 1,
+    "maxQuestionMarks": 1,
+    "forbidRepeatedPunctuation": true,
+    "hashtagsAllowed": false,
+    "markdownAllowed": false,
+    "emojiCount": {
+      "min": 0,
+      "max": 2
+    },
+    "emojiPosition": "END_ONLY",
+    "allowRepeatedEmoji": false,
+    "preferOutputsWithoutEmoji": true,
+    "priceMention": "OPTIONAL",
+    "productMention": "CORE_CATEGORY_BRAND_MODEL_OR_ONE_EXPLICIT_FEATURE"
+  },
+  "factPolicy": {
+    "useOnlyInputFacts": true,
+    "allowedInference": "COMMON_PRIMARY_USE_OF_PRODUCT_CATEGORY",
+    "pricePolicy": "IF_MENTIONED_COPY_priceBRL_EXACTLY",
+    "neverConvertPriceToConto": true,
+    "explicitFeatureOnly": true,
+    "unsupportedClaims": [
+      "DISCOUNT",
+      "DISCOUNT_PERCENTAGE",
+      "PREVIOUS_PRICE",
+      "SAVINGS",
+      "CHEAPNESS",
+      "LOWEST_PRICE",
+      "COUPON",
+      "STOCK",
+      "SCARCITY",
+      "DEADLINE",
+      "SHIPPING",
+      "INSTALLMENTS",
+      "CASHBACK",
+      "WARRANTY",
+      "ORIGINALITY",
+      "CUSTOMER_RATING",
+      "TECHNICAL_QUALITY",
+      "AVAILABILITY",
+      "COMPETITOR_COMPARISON"
+    ],
+    "forbidExternalPriceComparisons": true
+  },
+  "productNamePolicy": {
+    "extractCoreCategory": true,
+    "neverRepeatFullCatalogTitle": true,
+    "maxNamedFeatures": 1,
+    "keepNumbersExactly": true,
+    "preferredElements": [
+      "CORE_CATEGORY",
+      "BRAND",
+      "MODEL",
+      "MOST_RELEVANT_EXPLICIT_FEATURE"
+    ],
+    "ignoreWhenNotUseful": [
+      "SKU",
+      "INTERNAL_CODE",
+      "CERTIFICATION",
+      "REPEATED_TERMS",
+      "LOGISTICS_DATA",
+      "COLOR_CODE",
+      "VOLTAGE"
+    ],
+    "fallbackWhenUnclear": "USE_ONLY_THE_IDENTIFIABLE_PRODUCT_FRAGMENT_IN_A_NEUTRAL_FRAME"
+  },
+  "lexicalPolicy": {
+    "preferredNaturalMarkers": [
+      "TÁ",
+      "PRA",
+      "AÍ",
+      "OLHA ESSA",
+      "OLHA AÍ",
+      "QUEM TAVA",
+      "QUEM AÍ",
+      "AÍ SIM"
+    ],
+    "limitedExpressions": ["BORA", "MANO", "BICHÃO", "PARRUDO", "MONSTRINHO"],
+    "avoidOveruse": [
+      "PRECINHO",
+      "GALERA",
+      "TROPA",
+      "MEU CHAPA",
+      "BRABO",
+      "INSANO",
+      "SURREAL"
+    ],
+    "avoidForcedDiminutives": true,
+    "avoidForcedPuns": true,
+    "avoidInfluencerVoice": true,
+    "avoidRetailAnnouncerVoice": true
+  },
   "forbiddenWords": [
     "OFERTA",
     "OFERTÃO",
+    "OFERTAO",
+    "PROMO",
     "PROMOÇÃO",
+    "PROMOCAO",
     "IMPERDÍVEL",
     "IMPERDIVEL",
     "DESCONTÃO",
     "DESCONTAO",
-    "ALERTA"
+    "ALERTA",
+    "APROVEITE",
+    "CLIQUE",
+    "LINK"
   ],
-  "antiExamples": [
-    "OFERTA IMPERDÍVEL! COMPRE JÁ! 🔥 (marketing chato + palavra proibida)",
-    "aproveite essa promoção incrível 😊 (minúsculo, sem vibe, corporativo)",
-    "🔥🔥🔥 CLIQUE NO LINK AGORA 🔥🔥🔥 (spam, manda clicar no link)",
-    "Produto X por R$ 89,90 com 40% de desconto (frio, cita preço/desconto)",
-    "AIR FRYER MONDIAL 5L PRETA 127V INMETRO (copiou o título inteiro)"
+  "forbiddenPatterns": [
+    "COMPRE JÁ",
+    "COMPRE JA",
+    "ÚLTIMAS UNIDADES",
+    "ULTIMAS UNIDADES",
+    "ANTES QUE ACABE",
+    "ESTOQUE ACABANDO",
+    "CORRE QUE ACABA",
+    "CUPOM LIBERADO",
+    "FRETE GRÁTIS",
+    "FRETE GRATIS",
+    "MENOR PREÇO",
+    "MENOR PRECO",
+    "BAIXOU DE PREÇO",
+    "BAIXOU DE PRECO",
+    "CAIU DE PREÇO",
+    "CAIU DE PRECO",
+    "TÁ DE GRAÇA",
+    "TA DE GRACA"
+  ],
+  "generationProcess": [
+    "IDENTIFY_CORE_CATEGORY",
+    "EXTRACT_AT_MOST_ONE_RELEVANT_EXPLICIT_FEATURE",
+    "SELECT_ONE_ELIGIBLE_FRAME",
+    "WRITE_ONE_MAIN_IDEA",
+    "APPLY_NATURAL_BRAZILIAN_COLLOQUIAL_STYLE",
+    "CHECK_UNSUPPORTED_CLAIMS",
+    "CHECK_OUTPUT_FORMAT",
+    "RETURN_ONLY_FINAL_PHRASE"
+  ],
+  "frameSelectionRules": [
+    "SELECT_EXACTLY_ONE_FRAME",
+    "DO_NOT_COMBINE_MULTIPLE_HOOK_STRUCTURES",
+    "SKIP_ANY_FRAME_THAT_REQUIRES_MISSING_INFORMATION",
+    "PREFER_SIMPLE_AND_NATURAL_OUTPUTS",
+    "VARY_OPENINGS_ACROSS_CONSECUTIVE_GENERATIONS",
+    "DO_NOT_REPEAT_THE_SAME_CATCHPHRASE_AUTOMATICALLY"
   ],
   "frames": [
     {
+      "name": "PRA_QUEM_TAVA_PROCURANDO",
+      "weight": 3,
+      "eligibility": "CATEGORY_IS_CLEAR",
+      "guide": "Fale diretamente com quem já procurava aquela categoria. Use uma abertura simples como PRA QUEM TAVA ou QUEM TAVA.",
+      "examples": [
+        "PRA QUEM TAVA QUERENDO UMA AIR FRYER, OLHA ESSA 👀",
+        "QUEM TAVA ATRÁS DE UM FONE, ACHOU",
+        "PRA QUEM TAVA DE OLHO NUMA CAFETEIRA, OLHA AÍ ☕"
+      ],
+      "avoid": [
+        "TODO MUNDO PRECISA COMPRAR ESSA AGORA",
+        "MANO, TROPA, GALERA, OLHA ESSE BICHÃO PARRUDO"
+      ]
+    },
+    {
+      "name": "REACAO_AO_VALOR",
+      "weight": 3,
+      "eligibility": "PRICE_IS_AVAILABLE",
+      "guide": "Reaja ao valor sem afirmar que está barato, que caiu ou que é o menor preço. Preserve o preço exatamente.",
+      "examples": [
+        "R$ 89,90 NESSE FONE? AÍ CHAMOU ATENÇÃO 👀",
+        "ESSA CAFETEIRA POR R$ 129,90, OLHA AÍ",
+        "R$ 249,90 NESSA AIR FRYER, AÍ SIM"
+      ],
+      "avoid": ["TÁ DE GRAÇA POR R$ 89,90", "MENOR PREÇO DO ANO"]
+    },
+    {
       "name": "CENA_COTIDIANA",
       "weight": 2,
-      "guide": "Pinta uma cena do dia-a-dia onde o produto entra. Tipo: domingo, churras, faxina, viagem, treino, café da manhã, role. Frase começa descrevendo a situação, não o produto.",
+      "eligibility": "COMMON_USE_IS_OBVIOUS",
+      "guide": "Crie uma cena cotidiana curta baseada apenas no uso normal da categoria.",
       "examples": [
-        "DOMINGO DE CHURRA COM ESSE BICHÃO 🥩🔥🔥",
-        "PARCELADA!! ESSA PRO DIA DE FAXINA 🔥🔥🔥",
-        "ROLE NA PRAIA COM ESSE SOM AÍ 🌊🎵🔥",
-        "CAFÉ DA MANHÃ DE REI COM ESSA MARAVILHA ☕☕☕"
+        "CAFÉ DA MANHÃ VAI GANHAR OUTRO NÍVEL COM ESSA ☕",
+        "DIA DE FAXINA FICA MENOS SOFRIDO ASSIM",
+        "FILME NO SOFÁ COM UM FONE DESSE, AÍ SIM 🎧"
       ],
       "avoid": [
-        "AIR FRYER MONDIAL 5L PRETA 127V PRA SUA COZINHA 🔥",
-        "ADQUIRA JÁ ESSE PRODUTO DE QUALIDADE 😊"
+        "ESSA MÁQUINA LIMPA A CASA INTEIRA SOZINHA",
+        "DOMINGO PERFEITO GARANTIDO COM ESSE PRODUTO"
       ]
     },
     {
-      "name": "IMPERATIVO_GALERA",
+      "name": "USO_PRATICO",
       "weight": 2,
-      "guide": "Manda a galera AGIR. Verbo no imperativo (LEVA, BORA, CORRE, GARANTE, PEGA, FECHA). Geralmente tom de urgência amiga.",
+      "eligibility": "COMMON_USE_IS_OBVIOUS",
+      "guide": "Mostre de forma informal para qual rotina ou tipo de pessoa a categoria faz sentido.",
       "examples": [
-        "LEVA SEU SOM PRA ONDE FOR!! 🔥🔥🔥",
-        "BORA TROCAR O VELHINHO, MEU CHAPA!! 📱🔥🔥",
-        "CORRE QUE TÁ POR UM PRECINHO BÁSICO 🏃‍♂️💨💨",
-        "FECHA ESSA AÍ ANTES QUE ACABE! ⚡⚡⚡"
+        "PRA QUEM NÃO FUNCIONA SEM CAFEZINHO, OLHA ESSA ☕",
+        "PRA DEIXAR A FAXINA MENOS SOFRIDA",
+        "PRA QUEM VIVE COM O FONE NA ORELHA 🎧"
       ],
       "avoid": [
-        "CLICA NO LINK AGORA E APROVEITE 🔥🔥🔥",
-        "CORRE PRA ESSA OFERTA IMPERDÍVEL ⚡"
+        "PRODUTO IDEAL PARA TODAS AS SUAS NECESSIDADES",
+        "QUALIDADE E PRATICIDADE PARA O SEU DIA"
       ]
     },
     {
-      "name": "BENEFICIO_USO",
+      "name": "FEATURE_EXPLICITA",
       "weight": 2,
-      "guide": "Foca no QUE O PRODUTO PERMITE — espaço, autonomia, performance, conforto. Cita a feature mais marcante (RAM, litros, polegadas, mAh, etc) e o efeito prático.",
+      "eligibility": "A_RELEVANT_FEATURE_IS_EXPLICIT_IN_PRODUCT_NAME",
+      "guide": "Transforme uma única característica explícita em benefício cotidiano plausível. Não acrescente números ou funções.",
       "examples": [
-        "512 GB PRA ENCHER DE FOTO!! 😍😍😍",
-        "5200 mAh DE BATERIA PRA NÃO MORRER NA RUA! 🔋🔋",
-        "10 LITROS DE AIR FRYER PRA ALIMENTAR O BATALHÃO 🍗🔥🔥",
-        "12 GB DE RAM PRA RODAR ATÉ CHAMADO! 🚀🔥"
+        "256 GB PRA CABER FOTO SEM SOFRIMENTO 📱",
+        "5 LITROS PRA FACILITAR A ROTINA NA COZINHA",
+        "TELA DE 55 POLEGADAS PRA SESSÃO NO SOFÁ 📺"
+      ],
+      "avoid": [
+        "BATERIA QUE DURA O DIA TODO",
+        "PROCESSADOR MAIS RÁPIDO DO MERCADO"
       ]
     },
     {
-      "name": "COMENTARIO_PROVOCACAO",
-      "weight": 1,
-      "guide": "Comentário esperto, irônico ou provocando o leitor. Pode ser uma afirmação sarcástica sobre a vida dele.",
+      "name": "PERGUNTA_DE_GRUPO",
+      "weight": 2,
+      "eligibility": "CATEGORY_OR_PRICE_IS_CLEAR",
+      "guide": "Faça uma pergunta curta como alguém puxando conversa no grupo. Não pressione a compra.",
       "examples": [
-        "VOCÊ MAL TEM COMIDA AÍ PRA ENCHER ESSES POTES! 🔥🔥🔥",
-        "TUA COZINHA TÁ PEDINDO ESSA AÍ HEIN 👀👀",
-        "AINDA TÁ USANDO ESSE TIJOLÃO COMO CELULAR? 😂📱",
-        "TEU FONE TÁ ZUANDO MAIS QUE TU FALANDO 🎧😂"
+        "QUEM AÍ TAVA PRECISANDO DE UMA DESSAS?",
+        "R$ 49,90 NESSE FONE, QUEM AÍ CURTIU? 🎧",
+        "ESSA AQUI RESOLVIA A ROTINA DE QUEM?"
+      ],
+      "avoid": ["VAI PERDER ESSA MESMO?", "QUEM NÃO COMPRAR VAI SE ARREPENDER"]
+    },
+    {
+      "name": "COMENTARIO_SECO",
+      "weight": 2,
+      "eligibility": "CATEGORY_IS_CLEAR",
+      "guide": "Use humor seco ou uma observação curta, sem exagero publicitário e sem atacar o leitor.",
+      "examples": [
+        "A COZINHA OLHOU PRA ESSA E JÁ ENTENDEU",
+        "ESSE FONE AQUI NÃO VEIO PRA PASSEAR 🎧",
+        "A ROTINA VIU ESSA E FICOU INTERESSADA"
+      ],
+      "avoid": [
+        "VOCÊ MAL TEM COMIDA PRA USAR ISSO",
+        "ATÉ SUA AVÓ TEM UM MELHOR"
       ]
     },
     {
-      "name": "REFERENCIA_PESSOA",
+      "name": "UPGRADE_LEVE",
       "weight": 1,
-      "guide": "Identifica um tipo de pessoa que precisa do produto (viciado em X, fã de Y, quem trabalha com Z). Sempre começa em \"TODO\" ou \"QUEM\".",
+      "eligibility": "CATEGORY_IS_COMMONLY_REPLACED_OR_UPGRADED",
+      "guide": "Sugira uma troca de forma brincalhona. Não afirme que o item atual do leitor é ruim.",
       "examples": [
-        "TODO VICIADO EM CAFEZINHO DEVERIA TER UM DESSE ☕☕☕",
-        "QUEM AÍ TIRA FOTO DEMAIS PRECISA DESSA AQUI 📸🔥",
-        "TODO FÃ DE SOM BOM JÁ PEGA ESSA AÍ 🎵🎵🔥",
-        "QUEM NÃO AGUENTA MAIS LAVAR LOUÇA, TOMA 🍽️🤯"
-      ]
+        "O FONE ANTIGO JÁ PODE PEDIR FÉRIAS 😂",
+        "DÁ PRA DAR UM RESPIRO PRO CELULAR VELHINHO 📱",
+        "A COZINHA ACEITAVA ESSE REFORÇO NUMA BOA"
+      ],
+      "avoid": ["SEU CELULAR É UMA PORCARIA", "APOSENTA ESSA SUCATA AGORA"]
     },
     {
-      "name": "METAFORA_EXAGERO",
-      "weight": 1,
-      "guide": "Metáfora curta ou exagero descontraído. \"BICHÃO\", \"PARRUDO\", \"MONSTRO\", \"BÁSICO QUE VAI COM TUDO\".",
+      "name": "PRODUTO_CURTO_COM_PRECO",
+      "weight": 2,
+      "eligibility": "CATEGORY_AND_PRICE_ARE_CLEAR",
+      "guide": "Cite a categoria resumida e o preço exato, acrescentando uma reação coloquial curta.",
       "examples": [
-        "BASICÃO QUE VAI COM TUDO 🔥🔥🔥",
-        "BICHÃO PARRUDO POR PRECINHO BÁSICO 💪🔥🔥",
-        "MONSTRINHO PRA QUEM ENTENDE DO JOGO 🦖🔥",
-        "BICHO POSSESSO POR ESSE VALOR 🤯🤯🤯"
-      ]
-    },
-    {
-      "name": "PRECO_CONTO",
-      "weight": 1,
-      "guide": "Cita explicitamente o valor usando \"CONTO\" no lugar de \"REAIS\". Formato: [PRODUTO/USO] POR [PREÇO] CONTO!",
-      "examples": [
-        "AIR FRYER 10 LITROS POR 250 CONTO! 😱😱😱",
-        "SMARTPHONE PARRUDO POR 599 CONTO 🤯🤯🤯",
-        "FONE TOP POR 39 CONTO, BORA! 🎧🔥🔥",
-        "CHALEIRA ELÉTRICA POR 53 CONTO 😍😍😍"
-      ]
-    },
-    {
-      "name": "PERGUNTA_RETORICA",
-      "weight": 1,
-      "guide": "Pergunta retórica que assume o leitor já tá interessado. Termina com interrogação + emoji surpresa.",
-      "examples": [
-        "JÁ VIU ESSE BICHO NESSE PREÇO? 😱😱😱",
-        "QUEM AÍ NUNCA QUIS UM DESSE? 👀👀",
-        "ACHOU QUE NUNCA IA BAIXAR? POIS É! 🤯🔥",
-        "TU AINDA TÁ NO 64 GB EM 2026? 😬📱"
-      ]
-    },
-    {
-      "name": "TROCA_UPGRADE",
-      "weight": 1,
-      "guide": "Cutuca o leitor a substituir algo velho. Menção a \"VELHINHO\", \"ANTIGO\", \"BATIDO\", \"DA ÉPOCA\".",
-      "examples": [
-        "TÁ NA HORA DE TROCAR O TEU VELHINHO 📱🔥🔥",
-        "CHEGA DAQUELE TIJOLINHO ARRANHADO 😂🔥",
-        "TUA AVÓ JÁ TEM UM MELHOR QUE O TEU 👀😂",
-        "APOSENTA ESSE FRITADOR ANTIGO HEIN 🍳🔥"
-      ]
-    },
-    {
-      "name": "TROCADILHO_LEVE",
-      "weight": 1,
-      "guide": "Trocadilho ou jogo de palavras com nome/uso do produto. Ex: \"esfriou\" para ar-condicionado, \"fritou\" para air fryer.",
-      "examples": [
-        "CUPOM ESFRIOU PRA QUEM QUER ESFRIAR A CASA 🥶❄️",
-        "ESSE FRITOU A CONCORRÊNCIA 🍟🔥🔥",
-        "TÁ NA HORA DE DAR UM RESET NA TUA VIDA 💻🔄",
-        "ESQUENTOU A PROMO!! 🔥🔥🔥"
-      ]
-    },
-    {
-      "name": "COMPARACAO_VALOR",
-      "weight": 1,
-      "guide": "Compara o preço com algo mundano (lanche, gasolina, pizza, ifood). Faz parecer absurdamente barato.",
-      "examples": [
-        "MAIS BARATO QUE UM IFOOD DA SEXTA 🍔🤯",
-        "PREÇO DE LANCHINHO POR ESSE BICHÃO 🍟🔥",
-        "CUSTA MENOS QUE TEU ROLÊ DE SÁBADO 🍺💸",
-        "POR ESSE VALOR ATÉ TUA TIA COMPRA 😂🔥"
-      ]
-    },
-    {
-      "name": "ELOGIO_DIRETO",
-      "weight": 1,
-      "guide": "Elogio direto e curto pra qualidade ou preço. Sem rodeio. Tom de \"olha que coisa boa\".",
-      "examples": [
-        "ESSA AÍ TÁ NO PRECINHO BÁSICO!! 😍😍😍",
-        "BICHO BOM POR UM VALOR DESSE 💎🔥",
-        "TÁ DE GRAÇA QUASE!! 🤯🤯🤯",
-        "PRESENTÃO PRA SI MESMO 🎁🔥🔥"
+        "FONE BLUETOOTH POR R$ 39,90, OLHA ISSO 👀",
+        "CAFETEIRA POR R$ 119,90, OLHA AÍ ☕",
+        "AIR FRYER 5 LITROS POR R$ 249,90, AÍ SIM"
+      ],
+      "avoid": [
+        "AIR FRYER MONDIAL FAMILY 5L PRETA 127V INMETRO POR R$ 249,90",
+        "PRODUTO X POR R$ 89,90 COM DESCONTO INCRÍVEL"
       ]
     }
+  ],
+  "antiExamples": [
+    {
+      "text": "OFERTA IMPERDÍVEL! COMPRE JÁ! 🔥🔥🔥",
+      "reason": "MARKETING_CLICHE_FORBIDDEN_WORDS_AND_TOO_MANY_EMOJIS"
+    },
+    {
+      "text": "CORRE QUE SÓ TEM MAIS DUAS UNIDADES",
+      "reason": "INVENTED_SCARCITY"
+    },
+    {
+      "text": "MAIS BARATO QUE UM IFOOD DA SEXTA",
+      "reason": "UNVERIFIABLE_EXTERNAL_PRICE_COMPARISON"
+    },
+    {
+      "text": "SMARTPHONE COM BATERIA QUE DURA O DIA TODO",
+      "reason": "UNSUPPORTED_TECHNICAL_CLAIM"
+    },
+    {
+      "text": "AIR FRYER MONDIAL FAMILY 5L PRETA 127V INMETRO",
+      "reason": "FULL_CATALOG_TITLE_COPIED"
+    },
+    {
+      "text": "MANO, ESSA PROMO TÁ BRABA DEMAIS, TROPA",
+      "reason": "CARICATURE_EXCESSIVE_SLANG_AND_FORBIDDEN_WORD"
+    },
+    {
+      "text": "VOCÊ NEM TEM COMIDA PRA ENCHER ISSO",
+      "reason": "HUMILIATING_AND_CLASSIST_JOKE"
+    }
+  ],
+  "qualityChecks": [
+    "OUTPUT_HAS_EXACTLY_ONE_LINE",
+    "OUTPUT_IS_UPPERCASE_WITH_ACCENTS_PRESERVED",
+    "WORD_COUNT_IS_BETWEEN_5_AND_15",
+    "OUTPUT_HAS_ZERO_TO_TWO_EMOJIS_ONLY_AT_END",
+    "OUTPUT_DOES_NOT_REPEAT_EMOJIS",
+    "OUTPUT_HAS_NO_FORBIDDEN_WORD_OR_PATTERN_AFTER_ACCENT_NORMALIZATION",
+    "OUTPUT_HAS_NO_UNSUPPORTED_FACTUAL_CLAIM",
+    "OUTPUT_DOES_NOT_COPY_FULL_PRODUCT_TITLE",
+    "OUTPUT_USES_AT_MOST_ONE_MARKED_SLANG_EXPRESSION",
+    "PRICE_MATCHES_INPUT_EXACTLY_WHEN_PRESENT",
+    "OUTPUT_SOUNDS_LIKE_A_SINGLE_NATURAL_WHATSAPP_MESSAGE"
   ]
 }
