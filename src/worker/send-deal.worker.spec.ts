@@ -137,6 +137,7 @@ describe('SendDealWorker.process', () => {
       'B',
       undefined,
       undefined,
+      undefined,
     );
     expect(d.prisma.sentMessage.create).toHaveBeenCalledWith({
       data: {
@@ -159,6 +160,7 @@ describe('SendDealWorker.process', () => {
     expect(d.formatter.formatScored).toHaveBeenCalledWith(
       expect.anything(),
       'A',
+      undefined,
       undefined,
       undefined,
     );
@@ -188,6 +190,56 @@ describe('SendDealWorker.process', () => {
       expect.anything(),
       'B',
       { label: '📉 Menor preço em 30 dias', monitoredDays: 42 },
+      undefined,
+      undefined,
+    );
+  });
+
+  it('forwards a still-valid couponView to the formatter', async () => {
+    const d = makeDeps();
+    const worker = makeWorker(d);
+    const job = makeJob('telegram');
+    const cv = {
+      code: 'ABC',
+      mode: 'PRICE',
+      finalCents: 8000,
+      discountLabel: '-R$ 20',
+      minCents: null,
+      validUntil: '2999-01-01T00:00:00.000Z',
+    };
+    job.data.couponView = cv;
+
+    await (worker as any).process(job);
+
+    expect(d.formatter.formatScored).toHaveBeenCalledWith(
+      expect.anything(),
+      'B',
+      undefined,
+      undefined,
+      cv,
+    );
+  });
+
+  it('drops an expired couponView (passes undefined)', async () => {
+    const d = makeDeps();
+    const worker = makeWorker(d);
+    const job = makeJob('telegram');
+    job.data.couponView = {
+      code: 'OLD',
+      mode: 'PRICE',
+      finalCents: 8000,
+      discountLabel: '-R$ 20',
+      minCents: null,
+      validUntil: '2000-01-01T00:00:00.000Z',
+    };
+
+    await (worker as any).process(job);
+
+    expect(d.formatter.formatScored).toHaveBeenCalledWith(
+      expect.anything(),
+      'B',
+      undefined,
+      undefined,
       undefined,
     );
   });

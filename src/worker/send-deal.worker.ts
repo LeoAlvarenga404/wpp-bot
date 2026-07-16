@@ -100,6 +100,11 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
         scored: d.scored,
         variant: d.variant,
         priceView: d.priceView,
+        couponView:
+          d.couponView &&
+          new Date(d.couponView.validUntil).getTime() > Date.now()
+            ? d.couponView
+            : undefined,
       })),
     );
     await publisher.publish({ caption, imageUrl }, targetJid);
@@ -135,11 +140,19 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
 
     const variant = job.data.variant ?? 'A';
     const publisher = this.publishers.get(channel);
+    // Re-check coupon validity at send time — a job can sit in the queue past
+    // the coupon's expiry; never post a stale code (ml-coupons-v1).
+    const couponView =
+      job.data.couponView &&
+      new Date(job.data.couponView.validUntil).getTime() > Date.now()
+        ? job.data.couponView
+        : undefined;
     const { caption, imageUrl } = await this.formatter.formatScored(
       scored,
       variant,
       job.data.trustBadge,
       job.data.priceView,
+      couponView,
     );
     await publisher.publish({ caption, imageUrl }, targetJid);
 
