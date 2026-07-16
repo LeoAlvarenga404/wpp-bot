@@ -17,6 +17,11 @@ import {
   SourceId,
 } from '../sources/source.port';
 import { SourceRegistry } from '../sources/source-registry.service';
+import {
+  PRICE_SCRAPER_PORT,
+  type PriceScraperPort,
+} from '../pricing/price-scraper.port';
+import type { PriceView } from '../pricing/price-view';
 import type { CopyVariant } from '../shared/variant';
 import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
@@ -38,6 +43,8 @@ export class PipelineService {
     private readonly targets: TargetsService,
     @Inject(SEND_DEAL_QUEUE_TOKEN)
     private readonly sendQueue: Queue<SendJob>,
+    @Inject(PRICE_SCRAPER_PORT)
+    private readonly priceScraper: PriceScraperPort,
   ) {}
 
   async collectScored(sourceId: SourceId): Promise<ScoredDeal[]> {
@@ -196,6 +203,20 @@ export class PipelineService {
       posted.set(keyToString(sd.deal.key), { sd, variant, sent: false });
     }
 
+    // Scrape the real displayed price (Pix + no-interest installments) once per
+    // approved deal, then correct the deal's price fields so the message shows
+    // the same number as the site. Scrape failure keeps the API price.
+    const priceViews = new Map<string, PriceView>();
+    for (const { scored: sd } of selected) {
+      const view = await this.priceScraper.scrapePriceView(
+        sd.deal.raw.permalink,
+      );
+      if (view) {
+        this.applyPriceView(sd, view);
+        priceViews.set(keyToString(sd.deal.key), view);
+      }
+    }
+
     const addSingle = async (
       sd: ScoredDeal,
       variant: CopyVariant,
@@ -233,6 +254,7 @@ export class PipelineService {
             scored: sd,
             variant,
             trustBadge,
+            priceView: priceViews.get(catalogKey),
           },
           { jobId },
         );
@@ -277,6 +299,7 @@ export class PipelineService {
                 catalogKey: keyToString(sd.deal.key),
                 variant,
                 scored: sd,
+                priceView: priceViews.get(keyToString(sd.deal.key)),
               })),
             },
             { jobId },
@@ -299,6 +322,22 @@ export class PipelineService {
       `enqueueScored: deals=${selected.length} targets=${activeTargets.length} enqueued=${enqueued}`,
     );
     return { enqueued, targets: activeTargets.length, topScore };
+  }
+
+  /**
+   * Overwrite the deal's price fields with the scraped values so the published
+   * message (and the posted-decision audit) reflect the real site price rather
+   * than the stale/base API price. Only non-null scraped fields overwrite.
+   */
+  private applyPriceView(sd: ScoredDeal, view: PriceView): void {
+    const raw = sd.deal.raw;
+    raw.priceCents = view.priceCents;
+    if (view.originalPriceCents != null) {
+      raw.originalPriceCents = view.originalPriceCents;
+    }
+    if (view.discountPercent != null) {
+      raw.discountPercent = view.discountPercent;
+    }
   }
 
   private prescore(raw: RawDeal): number {

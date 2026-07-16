@@ -136,6 +136,7 @@ describe('SendDealWorker.process', () => {
       expect.anything(),
       'B',
       undefined,
+      undefined,
     );
     expect(d.prisma.sentMessage.create).toHaveBeenCalledWith({
       data: {
@@ -158,6 +159,7 @@ describe('SendDealWorker.process', () => {
     expect(d.formatter.formatScored).toHaveBeenCalledWith(
       expect.anything(),
       'A',
+      undefined,
       undefined,
     );
   });
@@ -186,6 +188,7 @@ describe('SendDealWorker.process', () => {
       expect.anything(),
       'B',
       { label: '📉 Menor preço em 30 dias', monitoredDays: 42 },
+      undefined,
     );
   });
 

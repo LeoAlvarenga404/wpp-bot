@@ -205,4 +205,45 @@ describe('FormatterService.formatScored', () => {
     expect(caption).toMatch(/Promoção/);
     expect(caption).not.toMatch(/Menor preço/);
   });
+
+  it('renders a no-interest installments line when priceView provides it', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('good'), 'A', undefined, {
+      priceCents: 10000,
+      originalPriceCents: 20000,
+      discountPercent: 50,
+      pixPriceCents: null,
+      installments: { count: 3, amountCents: 3333, noInterest: true },
+      scrapedAt: '2026-07-15T20:00:00.000Z',
+    });
+    expect(caption).toMatch(/3x de R\$\s?33,33 sem juros/);
+    // installments sit right under the price line, before the link
+    const lines = caption.split('\n');
+    const priceIdx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
+    const instIdx = lines.findIndex((l) => /sem juros/.test(l));
+    const linkIdx = lines.findIndex((l) => /🛒/.test(l));
+    expect(priceIdx).toBeGreaterThanOrEqual(0);
+    expect(instIdx).toBeGreaterThan(priceIdx);
+    expect(instIdx).toBeLessThan(linkIdx);
+  });
+
+  it('renders a Pix line when priceView has a lower Pix price', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('good'), 'A', undefined, {
+      priceCents: 10000,
+      originalPriceCents: 20000,
+      discountPercent: 50,
+      pixPriceCents: 8780,
+      installments: null,
+      scrapedAt: '2026-07-15T20:00:00.000Z',
+    });
+    expect(caption).toMatch(/R\$\s?87,80.*Pix/i);
+  });
+
+  it('omits Pix/installments lines when priceView is absent (API fallback)', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const { caption } = await svc.formatScored(makeScored('good'));
+    expect(caption).not.toMatch(/sem juros/);
+    expect(caption).not.toMatch(/no Pix/i);
+  });
 });

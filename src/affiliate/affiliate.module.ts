@@ -1,6 +1,11 @@
 import { Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
+import {
+  PRICE_SCRAPER_PORT,
+  PriceScraperPort,
+  NoopPriceScraper,
+} from '../pricing/price-scraper.port';
 import { AFFILIATE_LINK_PORT, AffiliateLinkPort } from './affiliate-link.port';
 import { AffiliateController } from './affiliate.controller';
 import { JsonCacheAffiliateAdapter } from './json-cache-adapter';
@@ -77,7 +82,23 @@ class FallbackAffiliateAdapter implements AffiliateLinkPort {
         return json;
       },
     },
+    {
+      provide: PRICE_SCRAPER_PORT,
+      inject: [ConfigService, PlaywrightAffiliateAdapter],
+      useFactory: (
+        config: ConfigService,
+        playwright: PlaywrightAffiliateAdapter,
+      ): PriceScraperPort => {
+        const provider = (
+          config.get<string>('AFFILIATE_PROVIDER', 'json') ?? 'json'
+        )
+          .toLowerCase()
+          .trim();
+        // Only the Playwright provider has a logged-in browser to scrape with.
+        return provider === 'playwright' ? playwright : new NoopPriceScraper();
+      },
+    },
   ],
-  exports: [AFFILIATE_LINK_PORT],
+  exports: [AFFILIATE_LINK_PORT, PRICE_SCRAPER_PORT],
 })
 export class AffiliateModule {}

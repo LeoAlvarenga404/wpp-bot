@@ -96,7 +96,11 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
 
     const publisher = this.publishers.get('wa');
     const { caption, imageUrl } = await this.formatter.formatDigest(
-      deals.map((d) => ({ scored: d.scored, variant: d.variant })),
+      deals.map((d) => ({
+        scored: d.scored,
+        variant: d.variant,
+        priceView: d.priceView,
+      })),
     );
     await publisher.publish({ caption, imageUrl }, targetJid);
 
@@ -135,6 +139,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       scored,
       variant,
       job.data.trustBadge,
+      job.data.priceView,
     );
     await publisher.publish({ caption, imageUrl }, targetJid);
 

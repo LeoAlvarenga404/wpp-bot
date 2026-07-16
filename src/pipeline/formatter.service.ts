@@ -8,6 +8,7 @@ import type { ScoredDeal } from '../deal-score/types';
 import type { CopyVariant } from '../shared/variant';
 import type { TrustBadge } from '../queue/queue.types';
 import type { RawDeal } from '../sources/source.port';
+import type { PriceView } from '../pricing/price-view';
 import { CaptionTemplate, templates, templatesByLevel } from './templates';
 import { variantBByLevel } from './templates/variants';
 
@@ -81,6 +82,7 @@ export class FormatterService {
     scored: ScoredDeal,
     variant: CopyVariant = 'A',
     trustBadge?: TrustBadge,
+    priceView?: PriceView,
   ): Promise<{ caption: string; imageUrl: string }> {
     const raw = scored.deal.raw;
     const headlineItem = scoredDealToHeadlineItem(scored);
@@ -102,9 +104,50 @@ export class FormatterService {
       ? `${trustBadge.label} ✓ monitorado há ${trustBadge.monitoredDays} dias`
       : null;
 
-    const caption = `${tmpl(scored, formatBRL, link, hook, trustLine)}\n\n${this.disclaimerLine()}`;
+    const body = this.injectPriceExtras(
+      tmpl(scored, formatBRL, link, hook, trustLine),
+      priceView,
+    );
+    const caption = `${body}\n\n${this.disclaimerLine()}`;
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
+  }
+
+  /**
+   * Insert the Pix price and no-interest installments lines right under the
+   * price line of any template (matched by the "(-N%)" discount tag). Keeps
+   * templates untouched. No-op when priceView is absent (API-price fallback).
+   */
+  private injectPriceExtras(body: string, priceView?: PriceView): string {
+    const extras = this.priceExtraLines(priceView);
+    if (extras.length === 0) return body;
+    const lines = body.split('\n');
+    let idx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
+    if (idx === -1) idx = lines.findIndex((l) => /R\$/.test(l));
+    if (idx === -1) {
+      // No price line found — append after the title-ish first block.
+      return [body, ...extras].join('\n');
+    }
+    lines.splice(idx + 1, 0, ...extras);
+    return lines.join('\n');
+  }
+
+  private priceExtraLines(priceView?: PriceView): string[] {
+    if (!priceView) return [];
+    const out: string[] = [];
+    if (
+      priceView.pixPriceCents != null &&
+      priceView.pixPriceCents < priceView.priceCents
+    ) {
+      out.push(`💠 ${this.formatBRL(priceView.pixPriceCents / 100)} no Pix`);
+    }
+    const inst = priceView.installments;
+    if (inst && inst.noInterest) {
+      out.push(
+        `💳 ou ${inst.count}x de ${this.formatBRL(inst.amountCents / 100)} sem juros`,
+      );
+    }
+    return out;
   }
 
   /**
@@ -113,7 +156,11 @@ export class FormatterService {
    * (gate returns deals sorted by score desc).
    */
   async formatDigest(
-    entries: Array<{ scored: ScoredDeal; variant: CopyVariant }>,
+    entries: Array<{
+      scored: ScoredDeal;
+      variant: CopyVariant;
+      priceView?: PriceView;
+    }>,
   ): Promise<{ caption: string; imageUrl: string }> {
     if (entries.length === 0) {
       throw new Error('formatDigest requires at least one deal');
@@ -122,7 +169,7 @@ export class FormatterService {
       entries.map((e) => this.resolveLink(e.scored.deal.raw)),
     );
     const blocks = entries.map((e, i) =>
-      this.digestBlock(e.scored, e.variant, links[i]),
+      this.digestBlock(e.scored, e.variant, links[i], e.priceView),
     );
     const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
     const caption = [
@@ -142,6 +189,7 @@ export class FormatterService {
     sd: ScoredDeal,
     variant: CopyVariant,
     link: string,
+    priceView?: PriceView,
   ): string {
     const raw = sd.deal.raw;
     const emoji =
@@ -158,6 +206,7 @@ export class FormatterService {
     } else {
       lines.push(`💰 *${this.formatBRL(price)}* (-${raw.discountPercent}%)`);
     }
+    lines.push(...this.priceExtraLines(priceView));
     if (sd.deal.signals.freeShipping) lines.push('🚚 Frete grátis');
     lines.push(`👉 ${link}`);
     return lines.join('\n');

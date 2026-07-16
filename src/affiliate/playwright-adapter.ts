@@ -9,6 +9,13 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { PrismaService } from '../db/prisma.service';
+import {
+  parseBrlToCents,
+  parseInstallments,
+  parseJsonLdPrice,
+} from '../pricing/price-parse';
+import type { PriceView } from '../pricing/price-view';
+import type { PriceScraperPort } from '../pricing/price-scraper.port';
 import { AffiliateLinkPort } from './affiliate-link.port';
 
 const LINKBUILDER_URL = 'https://www.mercadolivre.com.br/afiliados/linkbuilder';
@@ -43,7 +50,7 @@ const CREATE_LINK_API = '/affiliate-program/api/v2/affiliates/createLink';
  */
 @Injectable()
 export class PlaywrightAffiliateAdapter
-  implements AffiliateLinkPort, OnModuleInit, OnModuleDestroy
+  implements AffiliateLinkPort, PriceScraperPort, OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PlaywrightAffiliateAdapter.name);
 
@@ -54,6 +61,12 @@ export class PlaywrightAffiliateAdapter
   private cache: Map<string, string> = new Map();
   private cachePath = path.resolve('./data/playwright-cache.json');
   private statePath = path.resolve('./auth_info/playwright-state.json');
+
+  // Short-TTL price cache — prices move, so a stale scrape is worse than none.
+  private priceCache = new Map<string, { view: PriceView; at: number }>();
+  private readonly priceTtlMs = Number(
+    process.env.PRICE_SCRAPE_TTL_MS ?? 10 * 60 * 1000,
+  );
 
   constructor(
     private readonly config: ConfigService,
@@ -106,6 +119,122 @@ export class PlaywrightAffiliateAdapter
     } finally {
       await page.close().catch(() => undefined);
     }
+  }
+
+  /**
+   * Scrape the accurate displayed price (current, original, Pix, no-interest
+   * installments) from a product permalink. Reuses the authenticated context
+   * (a logged-in session clears ML's "negative_traffic" wall). Never throws —
+   * returns null on wall/timeout/parse failure so callers keep the API price.
+   */
+  async scrapePriceView(permalink: string): Promise<PriceView | null> {
+    const cached = this.priceCache.get(permalink);
+    if (cached && Date.now() - cached.at < this.priceTtlMs) return cached.view;
+
+    try {
+      await this.ensureBrowser();
+    } catch {
+      return null;
+    }
+    if (!this.context) return null;
+
+    const page = await this.context.newPage();
+    try {
+      // Block heavy assets — price data is text/JSON, not images.
+      await page.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        if (type === 'image' || type === 'media' || type === 'font') {
+          return route.abort();
+        }
+        return route.continue();
+      });
+
+      await page.goto(permalink, {
+        waitUntil: 'domcontentloaded',
+        timeout: 25_000,
+      });
+      if (/\/lgz\/login|negative_traffic|\/registration/i.test(page.url())) {
+        this.logger.warn(`price scrape hit login wall for ${permalink}`);
+        return null;
+      }
+      await page.waitForTimeout(2500);
+
+      const raw = await page.evaluate(() => {
+        const clean = (s: string | null | undefined) =>
+          (s || '').replace(/\s+/g, ' ').trim();
+        const txt = (sel: string) => {
+          const e = document.querySelector(sel);
+          return e ? clean((e as HTMLElement).innerText || e.textContent) : null;
+        };
+        const jsonld = Array.from(
+          document.querySelectorAll('script[type="application/ld+json"]'),
+        )
+          .map((s) => s.textContent || '')
+          .find((t) => /"offers"|"price"/i.test(t));
+        return {
+          jsonld: jsonld || null,
+          current:
+            txt('.ui-pdp-price__second-line .andes-money-amount__fraction') ||
+            txt('.andes-money-amount__fraction'),
+          original: txt('.andes-money-amount--previous'),
+          discountLabel: txt('.ui-pdp-price__second-line__label'),
+          installments:
+            txt('.ui-pdp-price__subtitles') || txt('[class*="installments"]'),
+          pix:
+            txt('[class*="pix" i]') ||
+            txt('.ui-pdp-promotions') ||
+            txt('.ui-pdp-price__discount'),
+        };
+      });
+
+      const view = this.buildPriceView(raw);
+      if (view) this.priceCache.set(permalink, { view, at: Date.now() });
+      return view;
+    } catch (err) {
+      this.logger.warn(
+        `price scrape failed for ${permalink}: ${(err as Error).message}`,
+      );
+      return null;
+    } finally {
+      await page.close().catch(() => undefined);
+    }
+  }
+
+  private buildPriceView(raw: {
+    jsonld: string | null;
+    current: string | null;
+    original: string | null;
+    discountLabel: string | null;
+    installments: string | null;
+    pix: string | null;
+  }): PriceView | null {
+    const priceCents =
+      parseJsonLdPrice(raw.jsonld || '') ?? parseBrlToCents(raw.current || '');
+    if (priceCents == null) return null;
+
+    const originalPriceCents = parseBrlToCents(raw.original || '');
+    let discountPercent: number | null = null;
+    const label = raw.discountLabel?.match(/(\d+)\s*%/);
+    if (label) discountPercent = parseInt(label[1], 10);
+    else if (originalPriceCents && originalPriceCents > priceCents) {
+      discountPercent = Math.round(
+        ((originalPriceCents - priceCents) / originalPriceCents) * 100,
+      );
+    }
+
+    // Only trust a Pix price that is a real number below the headline price.
+    const pixCandidate = parseBrlToCents(raw.pix || '');
+    const pixPriceCents =
+      pixCandidate != null && pixCandidate < priceCents ? pixCandidate : null;
+
+    return {
+      priceCents,
+      originalPriceCents,
+      discountPercent,
+      pixPriceCents,
+      installments: parseInstallments(raw.installments || ''),
+      scrapedAt: new Date().toISOString(),
+    };
   }
 
   // -------------------------------------------------------------------------

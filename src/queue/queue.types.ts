@@ -1,4 +1,5 @@
 import type { ScoredDeal } from '../deal-score/types';
+import type { PriceView } from '../pricing/price-view';
 
 export const SEND_DEAL_QUEUE = 'send-deal';
 
@@ -22,12 +23,15 @@ export interface SendDealJob {
   variant?: 'A' | 'B';
   /** Selo de preço monitorado. Optional: absent = render like today. */
   trustBadge?: TrustBadge;
+  /** Scraped accurate price (Pix + installments). Absent = API-price fallback. */
+  priceView?: PriceView;
   scored: ScoredDeal;
 }
 
 export interface DigestDealEntry {
   catalogKey: string;
   variant: 'A' | 'B';
+  priceView?: PriceView;
   scored: ScoredDeal;
 }
 
