@@ -3,6 +3,7 @@ import { AffiliateLinkPort } from '../affiliate/affiliate-link.port';
 import { HeadlineGenerator } from '../headline/headline.port';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
+import type { RedirectService } from '../redirect/redirect.service';
 
 function makeDeal(overrides: Partial<DealItem> = {}): DealItem {
   return {
@@ -250,5 +251,75 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const { caption } = await svc.formatScored(makeScored('good'));
     expect(caption).not.toContain('🎟️');
+  });
+});
+
+describe('FormatterService redirect wrapping (CTR short links)', () => {
+  function makeRedirect(short = 'https://links.x/r/abc1234') {
+    return {
+      wrapIfEnabled: jest.fn().mockResolvedValue(short),
+    } as unknown as RedirectService & { wrapIfEnabled: jest.Mock };
+  }
+
+  it('formatScored wraps the affiliate link through RedirectService with the deal key', async () => {
+    const redirect = makeRedirect();
+    const svc = new FormatterService(
+      makeAffiliate('https://meli.la/ABC'),
+      makeHeadline('h'),
+      redirect,
+    );
+
+    const { caption } = await svc.formatScored(makeScored('good'));
+
+    expect(redirect.wrapIfEnabled).toHaveBeenCalledWith(
+      'https://meli.la/ABC',
+      { dealKey: 'ml:MLB1' },
+    );
+    expect(caption).toContain('🛒 Link: https://links.x/r/abc1234');
+    expect(caption).not.toContain('https://meli.la/ABC');
+  });
+
+  it('formatItem wraps the affiliate link with the catalogId as deal key', async () => {
+    const redirect = makeRedirect();
+    const svc = new FormatterService(
+      makeAffiliate('https://meli.la/ABC'),
+      makeHeadline(),
+      redirect,
+    );
+
+    const { caption } = await svc.formatItem(makeDeal());
+
+    expect(redirect.wrapIfEnabled).toHaveBeenCalledWith(
+      'https://meli.la/ABC',
+      { dealKey: 'MLB123' },
+    );
+    expect(caption).toContain('https://links.x/r/abc1234');
+  });
+
+  it('formatDigest wraps every entry link', async () => {
+    const redirect = makeRedirect();
+    const svc = new FormatterService(
+      makeAffiliate('https://meli.la/ABC'),
+      makeHeadline('h'),
+      redirect,
+    );
+
+    const { caption } = await svc.formatDigest([
+      { scored: makeScored('good'), variant: 'A' },
+    ]);
+
+    expect(redirect.wrapIfEnabled).toHaveBeenCalledTimes(1);
+    expect(caption).toContain('https://links.x/r/abc1234');
+  });
+
+  it('without RedirectService the caption keeps the raw affiliate link (feature off)', async () => {
+    const svc = new FormatterService(
+      makeAffiliate('https://meli.la/ABC'),
+      makeHeadline('h'),
+    );
+
+    const { caption } = await svc.formatScored(makeScored('good'));
+
+    expect(caption).toContain('🛒 Link: https://meli.la/ABC');
   });
 });

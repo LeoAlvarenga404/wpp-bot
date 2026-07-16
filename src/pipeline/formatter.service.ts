@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AFFILIATE_LINK_PORT } from '../affiliate/affiliate-link.port';
 import type { AffiliateLinkPort } from '../affiliate/affiliate-link.port';
 import { HEADLINE_GENERATOR } from '../headline/headline.port';
 import type { HeadlineGenerator } from '../headline/headline.port';
+import { RedirectService } from '../redirect/redirect.service';
 import { DealItem } from '../mercado-livre/types';
 import type { ScoredDeal } from '../deal-score/types';
 import type { CopyVariant } from '../shared/variant';
@@ -23,6 +24,10 @@ export class FormatterService {
     private readonly affiliate: AffiliateLinkPort,
     @Inject(HEADLINE_GENERATOR)
     private readonly headline: HeadlineGenerator,
+    // Provided by the @Global RedirectModule; optional so unit tests (and any
+    // context without the module) keep working — absent = links untouched.
+    @Optional()
+    private readonly redirect?: RedirectService,
   ) {
     this.templates = templates;
   }
@@ -39,10 +44,11 @@ export class FormatterService {
     item: DealItem,
     lowestPriceBadge?: string,
   ): Promise<{ caption: string; imageUrl: string }> {
-    const [link, hook] = await Promise.all([
+    const [affiliateLink, hook] = await Promise.all([
       this.affiliate.resolve(item.permalink),
       this.headline.generate(item),
     ]);
+    const link = await this.wrapLink(affiliateLink, item.catalogId);
     const shipping = item.freeShipping ? '🚚 Frete grátis' : '';
 
     if (this.templates.length === 0) {
@@ -120,10 +126,24 @@ export class FormatterService {
   /**
    * ML precisa do passo de afiliação (painel/planilha). Shopee (e futuras
    * fontes com link já comissionado no feed) usa o permalink como está.
+   * Depois, o link (de qualquer fonte) passa pelo redirecionador de cliques
+   * quando REDIRECT_BASE_URL está configurada (CTR tracking).
    */
-  private resolveLink(raw: RawDeal): Promise<string> {
-    if (raw.key.source === 'ml') return this.affiliate.resolve(raw.permalink);
-    return Promise.resolve(raw.permalink);
+  private async resolveLink(raw: RawDeal): Promise<string> {
+    const link =
+      raw.key.source === 'ml'
+        ? await this.affiliate.resolve(raw.permalink)
+        : raw.permalink;
+    return this.wrapLink(link, `${raw.key.source}:${raw.key.externalId}`);
+  }
+
+  /**
+   * CTR short link. No-op when RedirectService is absent or
+   * REDIRECT_BASE_URL is empty (default) — captions stay unchanged.
+   */
+  private async wrapLink(link: string, dealKey: string): Promise<string> {
+    if (!this.redirect) return link;
+    return this.redirect.wrapIfEnabled(link, { dealKey });
   }
 
   /**

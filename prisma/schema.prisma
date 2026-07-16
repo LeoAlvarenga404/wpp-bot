@@ -116,6 +116,20 @@ model Coupon {
   @@index([scope, targetId, active])
 }
 
+// Click-tracking short link (CTR): outgoing captions link to
+// ${REDIRECT_BASE_URL}/r/{code}, GET /r/:code 302s to `url` and bumps
+// `clicks`. dealKey/channel are free-form attribution strings (no FK —
+// see PriceHistory note). Feature off while REDIRECT_BASE_URL is empty.
+model ShortLink {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  url       String
+  dealKey   String?
+  channel   String?
+  clicks    Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
 // Singleton row (id = 1) holding current ML OAuth tokens.
 model MlToken {
   id           Int      @id @default(1)

@@ -10,6 +10,7 @@ import { MercadoLivreModule } from './mercado-livre/ml.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { QueueModule } from './queue/queue.module';
+import { RedirectModule } from './redirect/redirect.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { SharedLoggerModule } from './shared/logger.module';
 import { SourcesModule } from './sources/sources.module';
@@ -28,6 +29,7 @@ import { WorkerModule } from './worker/worker.module';
     AffiliateModule,
     DedupModule,
     CouponModule,
+    RedirectModule,
     PipelineModule,
     WorkerModule,
     SchedulerModule,
