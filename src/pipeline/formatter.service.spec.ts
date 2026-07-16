@@ -167,6 +167,7 @@ function makeScored(level: ScoredDeal['level']): ScoredDeal {
         installmentsNoInterest: true,
         volumeTier: 'mid',
         isVerifiedStore: true,
+        isFull: false,
       },
       extras: {},
     },
@@ -185,51 +186,24 @@ function makeScored(level: ScoredDeal['level']): ScoredDeal {
   };
 }
 
-describe('FormatterService.formatScored', () => {
-  it('renders the imperdível template for level=super', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(makeScored('super'));
-    expect(caption).toMatch(/PROMOÇÃO IMPERDÍVEL/);
-    expect(caption).toMatch(/Menor preço dos últimos 30 dias/);
-  });
-
-  it('renders the top template for level=top', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(makeScored('top'));
-    expect(caption).toMatch(/PROMOÇÃO TOP/);
-  });
-
-  it('renders the good template for level=good (no analysis bullets)', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+describe('FormatterService.formatScored (ofertas clone)', () => {
+  it('emits hashtag, uppercased hook, title, price and link — no disclaimer', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('que preço'));
     const { caption } = await svc.formatScored(makeScored('good'));
-    expect(caption).toMatch(/Promoção/);
-    expect(caption).not.toMatch(/Menor preço/);
+    expect(caption.split('\n')[0]).toBe('#MercadoLivre');
+    expect(caption).toContain('QUE PREÇO 🔥');
+    expect(caption).toContain('➡️ T');
+    expect(caption).toContain('🛒 Link: https://meli.la/ABC');
+    expect(caption).not.toMatch(/Link de afiliado/);
+    expect(caption).not.toMatch(/PROMOÇÃO/);
   });
 
-  it('renders a no-interest installments line when priceView provides it', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(makeScored('good'), 'A', undefined, {
-      priceCents: 10000,
-      originalPriceCents: 20000,
-      discountPercent: 50,
-      pixPriceCents: null,
-      installments: { count: 3, amountCents: 3333, noInterest: true },
-      scrapedAt: '2026-07-15T20:00:00.000Z',
-    });
-    expect(caption).toMatch(/3x de R\$\s?33,33 sem juros/);
-    // installments sit right under the price line, before the link
-    const lines = caption.split('\n');
-    const priceIdx = lines.findIndex((l) => /\(-\d+%\)/.test(l));
-    const instIdx = lines.findIndex((l) => /sem juros/.test(l));
-    const linkIdx = lines.findIndex((l) => /🛒/.test(l));
-    expect(priceIdx).toBeGreaterThanOrEqual(0);
-    expect(instIdx).toBeGreaterThan(priceIdx);
-    expect(instIdx).toBeLessThan(linkIdx);
-  });
+  it('shows à vista when no priceView, no PIX when pixPriceCents present', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
+    const noPix = await svc.formatScored(makeScored('good'));
+    expect(noPix.caption).toContain('✅ R$ 100 à vista');
 
-  it('renders a Pix line when priceView has a lower Pix price', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(makeScored('good'), 'A', undefined, {
+    const withPix = await svc.formatScored(makeScored('good'), 'A', undefined, {
       priceCents: 10000,
       originalPriceCents: 20000,
       discountPercent: 50,
@@ -237,20 +211,19 @@ describe('FormatterService.formatScored', () => {
       installments: null,
       scrapedAt: '2026-07-15T20:00:00.000Z',
     });
-    expect(caption).toMatch(/R\$\s?87,80.*Pix/i);
+    expect(withPix.caption).toContain('✅ R$ 87 no PIX');
   });
 
-  it('omits Pix/installments lines when priceView is absent (API fallback)', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(makeScored('good'));
-    expect(caption).not.toMatch(/sem juros/);
-    expect(caption).not.toMatch(/no Pix/i);
+  it('renders ⚡ FULL when signals.isFull', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
+    const scored = makeScored('good');
+    scored.deal.signals.isFull = true;
+    const { caption } = await svc.formatScored(scored);
+    expect(caption).toContain('⚡ FULL');
   });
-});
 
-describe('FormatterService coupon line', () => {
-  it('PRICE mode shows final price + code', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+  it('renders coupon code only', async () => {
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const { caption } = await svc.formatScored(
       makeScored('good'),
       'A',
@@ -265,57 +238,13 @@ describe('FormatterService coupon line', () => {
         validUntil: '2999-01-01T00:00:00.000Z',
       },
     );
-    expect(caption).toContain('🎟️');
-    expect(caption).toContain('ABC');
-    expect(caption).toMatch(/R\$\s?80,00/);
-  });
-
-  it('CTA mode shows code + threshold, no final price claim', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatScored(
-      makeScored('good'),
-      'A',
-      undefined,
-      undefined,
-      {
-        code: 'XYZ',
-        mode: 'CTA',
-        finalCents: null,
-        discountLabel: '-R$ 20',
-        minCents: 10000,
-        validUntil: '2999-01-01T00:00:00.000Z',
-      },
-    );
-    expect(caption).toContain('🎟️');
-    expect(caption).toContain('XYZ');
-    expect(caption).toContain('acima de');
-    expect(caption).toMatch(/R\$\s?100,00/);
+    expect(caption).toContain('🎟️ Use o cupom: ABC');
+    expect(caption).not.toMatch(/válido até/);
   });
 
   it('no couponView -> no coupon line', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
+    const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const { caption } = await svc.formatScored(makeScored('good'));
     expect(caption).not.toContain('🎟️');
-  });
-
-  it('threads couponView through the digest block', async () => {
-    const svc = new FormatterService(makeAffiliate(), makeHeadline('HOOK'));
-    const { caption } = await svc.formatDigest([
-      {
-        scored: makeScored('top'),
-        variant: 'A',
-        couponView: {
-          code: 'DIGCUP',
-          mode: 'PRICE',
-          finalCents: 9000,
-          discountLabel: '-10%',
-          minCents: null,
-          validUntil: '2999-01-01T00:00:00.000Z',
-        },
-      },
-      { scored: makeScored('good'), variant: 'A' },
-    ]);
-    expect(caption).toContain('🎟️');
-    expect(caption).toContain('DIGCUP');
   });
 });

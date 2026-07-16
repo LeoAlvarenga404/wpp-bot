@@ -10,8 +10,9 @@ import type { TrustBadge } from '../queue/queue.types';
 import type { RawDeal } from '../sources/source.port';
 import type { PriceView } from '../pricing/price-view';
 import type { CouponView } from '../coupon/coupon.types';
-import { CaptionTemplate, templates, templatesByLevel } from './templates';
-import { variantBByLevel } from './templates/variants';
+import { templates } from './templates';
+import type { CaptionTemplate } from './templates';
+import { ofertasTemplate } from './templates/template-ofertas';
 
 function scoredDealToHeadlineItem(scored: ScoredDeal): DealItem {
   const raw = scored.deal.raw;
@@ -81,8 +82,8 @@ export class FormatterService {
 
   async formatScored(
     scored: ScoredDeal,
-    variant: CopyVariant = 'A',
-    trustBadge?: TrustBadge,
+    _variant: CopyVariant = 'A',
+    _trustBadge?: TrustBadge,
     priceView?: PriceView,
     couponView?: CouponView,
   ): Promise<{ caption: string; imageUrl: string }> {
@@ -92,27 +93,13 @@ export class FormatterService {
       this.resolveLink(raw),
       this.headline.generate(headlineItem),
     ]);
-    const formatBRL = (n: number) => this.formatBRL(n);
-
-    // 'rejected' level never reaches dispatch; fall back to good template defensively.
-    const level =
-      scored.level === 'super' || scored.level === 'top'
-        ? scored.level
-        : 'good';
-    const byLevel = variant === 'B' ? variantBByLevel : templatesByLevel;
-    const tmpl = byLevel[level];
-
-    const trustLine = trustBadge
-      ? `${trustBadge.label} ✓ monitorado há ${trustBadge.monitoredDays} dias`
-      : null;
-
-    let body = this.injectPriceExtras(
-      tmpl(scored, formatBRL, link, hook, trustLine),
+    const caption = ofertasTemplate({
+      sd: scored,
+      link,
+      hook,
       priceView,
-    );
-    const cLine = this.couponLine(couponView);
-    if (cLine) body = this.appendCouponLine(body, cLine);
-    const caption = `${body}\n\n${this.disclaimerLine()}`;
+      couponView,
+    });
     const imageUrl = this.toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
   }
