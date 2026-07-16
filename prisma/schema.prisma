@@ -94,6 +94,28 @@ model AffiliateLink {
   generatedAt DateTime @default(now())
 }
 
+// Manually-registered ML coupons (ml-coupons-v1). scope/type/targetId are
+// strings (not enums) so a new scope doesn't require a migration — same
+// rationale as WaTarget.channel. Money in integer cents.
+model Coupon {
+  id            String   @id @default(cuid())
+  code          String
+  scope         String // 'SELLER' | 'PRODUCT'
+  targetId      String
+  type          String // 'PERCENT' | 'FIXED'
+  value         Int
+  capCents      Int?
+  minCents      Int?
+  firstBuy      Boolean  @default(false)
+  perUser       Boolean  @default(false)
+  validUntil    DateTime
+  active        Boolean  @default(true)
+  affiliateSafe Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([scope, targetId, active])
+}
+
 // Singleton row (id = 1) holding current ML OAuth tokens.
 model MlToken {
   id           Int      @id @default(1)
