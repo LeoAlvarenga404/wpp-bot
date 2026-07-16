@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { CouponModule } from './coupon/coupon.module';
 import { DbModule } from './db/db.module';
 import { DedupModule } from './dedup/dedup.module';
 import { MercadoLivreModule } from './mercado-livre/ml.module';
@@ -26,6 +27,7 @@ import { WorkerModule } from './worker/worker.module';
     WhatsappModule,
     AffiliateModule,
     DedupModule,
+    CouponModule,
     PipelineModule,
     WorkerModule,
     SchedulerModule,
