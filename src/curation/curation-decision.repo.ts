@@ -70,12 +70,19 @@ export class PrismaCurationDecisionRepo implements CurationDecisionRepo {
     const dateFrom = new Date();
     dateFrom.setDate(dateFrom.getDate() - days);
 
+    // Threshold calibration reflects HUMAN decisions on algorithmically-scored
+    // deals only. The gate files its automated drops under their own stages
+    // (dedup, score_min, fake_discount, judge, …) and manual deals under
+    // 'approval_manual'; counting those would swamp the panel with hundreds of
+    // dedup rejections and never show a single human approval. Restrict to the
+    // 'approval' stage — the one the panel's approve/reject/expire path writes.
     const stats = await (this.prisma as any).curationDecision.groupBy({
       by: ['outcome'],
       _sum: { count: true },
       _avg: { score: true },
       where: {
         firstAt: { gte: dateFrom },
+        stage: 'approval',
       },
     });
 
