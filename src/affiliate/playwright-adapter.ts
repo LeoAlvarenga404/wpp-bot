@@ -16,10 +16,26 @@ import {
 } from '../pricing/price-parse';
 import type { PriceView } from '../pricing/price-view';
 import type { PriceScraperPort } from '../pricing/price-scraper.port';
+import type {
+  ProductScraperPort,
+  ProductView,
+} from '../pricing/product-scraper.port';
 import { AffiliateLinkPort } from './affiliate-link.port';
 
 const LINKBUILDER_URL = 'https://www.mercadolivre.com.br/afiliados/linkbuilder';
 const CREATE_LINK_API = '/affiliate-program/api/v2/affiliates/createLink';
+
+/** Raw strings scraped off a product page, before parsing into a view. */
+interface RawPdp {
+  title: string | null;
+  thumbnail: string | null;
+  jsonld: string | null;
+  current: string | null;
+  original: string | null;
+  discountLabel: string | null;
+  installments: string | null;
+  pix: string | null;
+}
 
 /**
  * Playwright-driven affiliate link resolver (P2-19).
@@ -50,7 +66,12 @@ const CREATE_LINK_API = '/affiliate-program/api/v2/affiliates/createLink';
  */
 @Injectable()
 export class PlaywrightAffiliateAdapter
-  implements AffiliateLinkPort, PriceScraperPort, OnModuleInit, OnModuleDestroy
+  implements
+    AffiliateLinkPort,
+    PriceScraperPort,
+    ProductScraperPort,
+    OnModuleInit,
+    OnModuleDestroy
 {
   private readonly logger = new Logger(PlaywrightAffiliateAdapter.name);
 
@@ -131,6 +152,21 @@ export class PlaywrightAffiliateAdapter
     const cached = this.priceCache.get(permalink);
     if (cached && Date.now() - cached.at < this.priceTtlMs) return cached.view;
 
+    const raw = await this.scrapePdpRaw(permalink);
+    if (!raw) return null;
+    const view = this.buildPriceView(raw);
+    if (view) this.priceCache.set(permalink, { view, at: Date.now() });
+    return view;
+  }
+
+  /**
+   * Navigate to a product page in the authenticated context and scrape the raw
+   * strings both price and product views are built from. Single owner of the
+   * PDP scaffolding (asset-block, login-wall guard, evaluate) so an ML DOM
+   * change is a one-place edit. Never throws — returns null on
+   * wall/timeout/failure so callers stay on the "return null" contract.
+   */
+  private async scrapePdpRaw(url: string): Promise<RawPdp | null> {
     try {
       await this.ensureBrowser();
     } catch {
@@ -140,7 +176,8 @@ export class PlaywrightAffiliateAdapter
 
     const page = await this.context.newPage();
     try {
-      // Block heavy assets — price data is text/JSON, not images.
+      // Block heavy assets — everything we read is text/JSON or a meta URL,
+      // never the image pixels themselves.
       await page.route('**/*', (route) => {
         const type = route.request().resourceType();
         if (type === 'image' || type === 'media' || type === 'font') {
@@ -149,29 +186,38 @@ export class PlaywrightAffiliateAdapter
         return route.continue();
       });
 
-      await page.goto(permalink, {
-        waitUntil: 'domcontentloaded',
-        timeout: 25_000,
-      });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
       if (/\/lgz\/login|negative_traffic|\/registration/i.test(page.url())) {
-        this.logger.warn(`price scrape hit login wall for ${permalink}`);
+        this.logger.warn(`pdp scrape hit login wall for ${url}`);
         return null;
       }
       await page.waitForTimeout(2500);
 
-      const raw = await page.evaluate(() => {
+      return await page.evaluate(() => {
         const clean = (s: string | null | undefined) =>
           (s || '').replace(/\s+/g, ' ').trim();
         const txt = (sel: string) => {
           const e = document.querySelector(sel);
-          return e ? clean((e as HTMLElement).innerText || e.textContent) : null;
+          return e
+            ? clean((e as HTMLElement).innerText || e.textContent)
+            : null;
         };
+        const meta = (sel: string) =>
+          clean(document.querySelector<HTMLMetaElement>(sel)?.content) || null;
         const jsonld = Array.from(
           document.querySelectorAll('script[type="application/ld+json"]'),
         )
           .map((s) => s.textContent || '')
           .find((t) => /"offers"|"price"/i.test(t));
         return {
+          title:
+            txt('h1.ui-pdp-title') ||
+            meta('meta[property="og:title"]') ||
+            txt('h1'),
+          thumbnail:
+            meta('meta[property="og:image"]') ||
+            document.querySelector<HTMLImageElement>('.ui-pdp-image')?.src ||
+            null,
           jsonld: jsonld || null,
           current:
             txt('.ui-pdp-price__second-line .andes-money-amount__fraction') ||
@@ -186,13 +232,9 @@ export class PlaywrightAffiliateAdapter
             txt('.ui-pdp-price__discount'),
         };
       });
-
-      const view = this.buildPriceView(raw);
-      if (view) this.priceCache.set(permalink, { view, at: Date.now() });
-      return view;
     } catch (err) {
       this.logger.warn(
-        `price scrape failed for ${permalink}: ${(err as Error).message}`,
+        `pdp scrape failed for ${url}: ${(err as Error).message}`,
       );
       return null;
     } finally {
@@ -234,6 +276,27 @@ export class PlaywrightAffiliateAdapter
       pixPriceCents,
       installments: parseInstallments(raw.installments || ''),
       scrapedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Full product snapshot for the manual-deal resolver (issue #8): title +
+   * image on top of the same price fields scrapePriceView reads. Reuses the
+   * authenticated context. Never throws — returns null on wall/timeout/parse
+   * failure so the resolver reports a clean "scrape failed" (no phantom card).
+   */
+  async scrapeProductView(url: string): Promise<ProductView | null> {
+    const raw = await this.scrapePdpRaw(url);
+    if (!raw) return null;
+    const priceView = this.buildPriceView(raw);
+    if (!priceView || !raw.title) return null;
+    return {
+      title: raw.title,
+      thumbnail: raw.thumbnail || '',
+      priceCents: priceView.priceCents,
+      originalPriceCents: priceView.originalPriceCents,
+      discountPercent: priceView.discountPercent,
+      installments: priceView.installments,
     };
   }
 

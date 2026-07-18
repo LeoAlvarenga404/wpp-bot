@@ -161,6 +161,25 @@ export class ApprovalQueueService {
     return { ...autoResult, pending: borderline.length, threshold };
   }
 
+  /**
+   * Manual deal (issue #8): a curator-resolved deal enters the queue as
+   * PENDING exactly like a borderline pipeline deal, so it inherits the whole
+   * card mechanic (preview, edit, urgent, dedup warning, send). Returns the
+   * card summary — including `postedDaysAgo` so the panel can warn on a recent
+   * repost right away.
+   */
+  async createManual(sd: ScoredDeal): Promise<PendingSummary> {
+    await this.holdPending(sd);
+    const catalogId = keyToString(sd.deal.key);
+    const row = await this.repo.findPendingByCatalogId(catalogId);
+    if (!row) {
+      // holdPending just created/refreshed it — a miss here means a storage
+      // fault, not a normal state.
+      throw new Error(`manual deal '${catalogId}' vanished after hold`);
+    }
+    return this.toSummary(row);
+  }
+
   async listPending(): Promise<PendingSummary[]> {
     await this.expireOverdue();
     const rows = await this.repo.listPending();
@@ -422,10 +441,15 @@ export class ApprovalQueueService {
     stage = 'approval',
   ): Promise<void> {
     const sd = row.snapshot as ScoredDeal;
+    // Manual deals carry a sentinel score (not an algorithmic one), so their
+    // primary decision is filed under a distinct stage — the score-based
+    // threshold calibration reads stage 'approval' and must never see it.
+    const effStage =
+      stage === 'approval' && this.isManual(sd) ? 'approval_manual' : stage;
     try {
       await this.decisions.upsert({
         catalogId: row.catalogId,
-        stage,
+        stage: effStage,
         outcome,
         day: dayString(this.now(), this.tz),
         score: row.score,
@@ -435,9 +459,16 @@ export class ApprovalQueueService {
       });
     } catch (err) {
       this.logger.warn(
-        `decision upsert failed (${stage}/${row.catalogId}): ${(err as Error).message}`,
+        `decision upsert failed (${effStage}/${row.catalogId}): ${(err as Error).message}`,
       );
     }
+  }
+
+  /** A deal that entered the queue via the manual-resolver path (issue #8). */
+  private isManual(sd: ScoredDeal | undefined): boolean {
+    return (
+      (sd?.deal?.extras as { manual?: boolean } | undefined)?.manual === true
+    );
   }
 
   /** Seam for tests: overridable so specs control the clock. */

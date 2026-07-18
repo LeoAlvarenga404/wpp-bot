@@ -2,15 +2,29 @@ import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { ApprovalQueueService } from './approval-queue.service';
 import { ApproveDealDto } from './dto/approve-deal.dto';
+import { ResolveManualDto } from './dto/resolve-manual.dto';
+import { ManualDealService } from './manual/manual-deal.service';
 
 @Controller('approval')
 @UseGuards(ApiKeyGuard)
 export class ApprovalController {
-  constructor(private readonly approvalQueue: ApprovalQueueService) {}
+  constructor(
+    private readonly approvalQueue: ApprovalQueueService,
+    private readonly manualDeals: ManualDealService,
+  ) {}
 
   @Get('pending')
   async listPending() {
     return { pending: await this.approvalQueue.listPending() };
+  }
+
+  /**
+   * Deal manual (issue #8): paste a product URL, get a filled pending card.
+   * A resolve failure returns a clear 4xx and creates no card.
+   */
+  @Post('manual/resolve')
+  async resolveManual(@Body() body: ResolveManualDto) {
+    return this.manualDeals.resolveUrl(body.url);
   }
 
   @Post(':id/approve')
