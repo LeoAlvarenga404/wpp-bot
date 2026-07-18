@@ -19,6 +19,7 @@ import { SharedLoggerModule } from './shared/logger.module';
 import { SourcesModule } from './sources/sources.module';
 import { WhatsappModule } from './whatsapp/wa.module';
 import { WorkerModule } from './worker/worker.module';
+import { HistoryModule } from './history/history.module';
 
 // Curation panel SPA (web/dist, built by Vite). Registered only when the
 // build output exists so test bootstraps and API-only deployments don't
@@ -48,6 +49,7 @@ const panelModule = existsSync(panelDist)
     WorkerModule,
     SchedulerModule,
     MetricsModule,
+    HistoryModule,
     ...panelModule,
   ],
 })

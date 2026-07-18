@@ -109,3 +109,7 @@ export async function rejectDeal(id: string): Promise<void> {
     method: 'POST',
   });
 }
+
+export async function fetchHistory(page = 1, limit = 20): Promise<{ items: import('./types').HistoryItem[]; total: number }> {
+  return request(`/history?page=${page}&limit=${limit}`);
+}

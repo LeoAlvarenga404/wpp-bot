@@ -10,6 +10,7 @@ import {
   UnauthorizedError,
 } from './api';
 import { DealCard } from './components/DealCard';
+import { HistoryPanel } from './components/HistoryPanel';
 import type { ApproveOptions, PendingDeal } from './types';
 
 const POLL_MS = 20_000;
@@ -17,6 +18,7 @@ const POLL_MS = 20_000;
 type Status = 'loading' | 'ready' | 'unauthorized' | 'error';
 
 export default function App() {
+  const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [deals, setDeals] = useState<PendingDeal[]>([]);
   const [status, setStatus] = useState<Status>('loading');
   const [toast, setToast] = useState<string | null>(null);
@@ -113,43 +115,64 @@ export default function App() {
     <div className="min-h-dvh bg-stone-950 text-stone-100">
       <header className="sticky top-0 z-10 border-b border-stone-800 bg-stone-950/95 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-md items-center justify-between">
-          <h1 className="text-lg font-bold">Fila de aprovação</h1>
-          <span className="rounded-full bg-stone-800 px-2.5 py-0.5 text-sm text-stone-300">
-            {deals.length} pendente{deals.length === 1 ? '' : 's'}
-          </span>
+          <div className="flex gap-4">
+            <button
+              className={`text-lg font-bold ${tab === 'pending' ? 'text-stone-100' : 'text-stone-500'}`}
+              onClick={() => setTab('pending')}
+            >
+              Fila
+            </button>
+            <button
+              className={`text-lg font-bold ${tab === 'history' ? 'text-stone-100' : 'text-stone-500'}`}
+              onClick={() => setTab('history')}
+            >
+              Histórico
+            </button>
+          </div>
+          {tab === 'pending' && (
+            <span className="rounded-full bg-stone-800 px-2.5 py-0.5 text-sm text-stone-300">
+              {deals.length} pendente{deals.length === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
       </header>
 
       <main className="mx-auto flex max-w-md flex-col gap-4 px-3 py-4 pb-10">
-        {status === 'loading' && (
-          <p className="py-16 text-center text-stone-400">Carregando…</p>
+        {tab === 'history' ? (
+          <HistoryPanel onUnauthorized={() => setStatus('unauthorized')} />
+        ) : (
+          <>
+            {status === 'loading' && (
+              <p className="py-16 text-center text-stone-400">Carregando…</p>
+            )}
+            {status === 'error' && (
+              <p className="py-16 text-center text-red-400">
+                Não consegui falar com a API.{' '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => void refresh()}
+                >
+                  Tentar de novo
+                </button>
+              </p>
+            )}
+            {status === 'ready' && deals.length === 0 && (
+              <p className="py-16 text-center text-stone-400">
+                Fila vazia — nada aguardando aprovação. 🎉
+              </p>
+            )}
+            {deals.map((deal) => (
+              <DealCard
+                key={deal.id}
+                deal={deal}
+                now={now}
+                onApprove={(id, opts) => decide(id, 'approve', opts)}
+                onReject={(id) => decide(id, 'reject')}
+              />
+            ))}
+          </>
         )}
-        {status === 'error' && (
-          <p className="py-16 text-center text-red-400">
-            Não consegui falar com a API.{' '}
-            <button
-              type="button"
-              className="underline"
-              onClick={() => void refresh()}
-            >
-              Tentar de novo
-            </button>
-          </p>
-        )}
-        {status === 'ready' && deals.length === 0 && (
-          <p className="py-16 text-center text-stone-400">
-            Fila vazia — nada aguardando aprovação. 🎉
-          </p>
-        )}
-        {deals.map((deal) => (
-          <DealCard
-            key={deal.id}
-            deal={deal}
-            now={now}
-            onApprove={(id, opts) => decide(id, 'approve', opts)}
-            onReject={(id) => decide(id, 'reject')}
-          />
-        ))}
       </main>
 
       {toast && (

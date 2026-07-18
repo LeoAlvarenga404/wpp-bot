@@ -55,3 +55,14 @@ export interface CuratorEdits {
   priceCents?: number;
   coupon?: CuratorCouponEdit;
 }
+
+export interface HistoryItem {
+  id: string;
+  catalogId: string;
+  targetJid: string;
+  caption: string;
+  variant: string | null;
+  score: number | null;
+  sentAt: string;
+}
+
