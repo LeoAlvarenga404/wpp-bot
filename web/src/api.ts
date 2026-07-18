@@ -114,11 +114,17 @@ export async function fetchHistory(page = 1, limit = 20): Promise<{ items: impor
   return request(`/history?page=${page}&limit=${limit}`);
 }
 
-export async function getOpsConfig(): Promise<{ values: Record<string, string> }> {
+export interface OpsConfigValue {
+  key: string;
+  value: string;
+  source: string;
+}
+
+export async function getOpsConfig(): Promise<{ values: OpsConfigValue[] }> {
   return request('/ops-config');
 }
 
-export async function setOpsConfig(key: string, value: string): Promise<{ values: Record<string, string> }> {
+export async function setOpsConfig(key: string, value: string): Promise<{ values: OpsConfigValue[] }> {
   return request(`/ops-config/${encodeURIComponent(key)}`, {
     method: 'PUT',
     json: { value },
