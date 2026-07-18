@@ -17,9 +17,19 @@ export interface DecisionUpsert {
   edits?: unknown;
 }
 
+export interface CalibrationStats {
+  periodDays: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  avgApprovedScore: number | null;
+  avgRejectedScore: number | null;
+}
+
 export interface CurationDecisionRepo {
   upsert(d: DecisionUpsert): Promise<void>;
   pruneOlderThan(cutoff: Date): Promise<number>;
+  getCalibrationStats(days: number): Promise<CalibrationStats>;
 }
 
 @Injectable()
@@ -54,5 +64,45 @@ export class PrismaCurationDecisionRepo implements CurationDecisionRepo {
       where: { firstAt: { lt: cutoff } },
     });
     return res.count as number;
+  }
+
+  async getCalibrationStats(days: number): Promise<CalibrationStats> {
+    const dateFrom = new Date();
+    dateFrom.setDate(dateFrom.getDate() - days);
+
+    const stats = await (this.prisma as any).curationDecision.groupBy({
+      by: ['outcome'],
+      _sum: { count: true },
+      _avg: { score: true },
+      where: {
+        firstAt: { gte: dateFrom },
+      },
+    });
+
+    const result: CalibrationStats = {
+      periodDays: days,
+      approved: 0,
+      rejected: 0,
+      expired: 0,
+      avgApprovedScore: null,
+      avgRejectedScore: null,
+    };
+
+    for (const row of stats) {
+      const sumCount = row._sum.count ?? 0;
+      const avgScore = row._avg.score !== null ? Math.round(row._avg.score) : null;
+
+      if (row.outcome === 'approved') {
+        result.approved += sumCount;
+        if (avgScore !== null) result.avgApprovedScore = avgScore;
+      } else if (row.outcome === 'rejected') {
+        result.rejected += sumCount;
+        if (avgScore !== null) result.avgRejectedScore = avgScore;
+      } else if (row.outcome === 'expired') {
+        result.expired += sumCount;
+      }
+    }
+
+    return result;
   }
 }
