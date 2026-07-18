@@ -471,6 +471,118 @@ describe('SendDealWorker stale-price re-check (single)', () => {
   });
 });
 
+describe('SendDealWorker curator edits (approval panel)', () => {
+  it('stale job with an edited price: publishes without re-scraping (human price wins)', async () => {
+    const d = makeDeps();
+    const w = makeWorker(d);
+    const job = makeJob('wa');
+    job.timestamp = Date.now() - STALE_MS;
+    job.data.scored.deal.raw.priceCents = 8400;
+    job.data.scored.curatorEdits = { priceCents: 8400 };
+
+    await (w as any).process(job);
+
+    expect(d.scraper.scrapePriceView).not.toHaveBeenCalled();
+    expect(d.counters.stalePriceDrop.inc).not.toHaveBeenCalled();
+    expect(d.publisher.publish).toHaveBeenCalledTimes(1);
+    // No PriceView: the caption falls back to the edited raw price.
+    expect(d.formatter.formatScored.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it('edited coupon overrides the job couponView on a fresh job', async () => {
+    const d = makeDeps();
+    const w = makeWorker(d);
+    const job = makeJob('wa');
+    job.data.couponView = {
+      code: 'AUTO5',
+      mode: 'PRICE',
+      finalCents: 9500,
+      discountLabel: '-R$ 5',
+      minCents: null,
+      validUntil: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    job.data.scored.curatorEdits = {
+      coupon: { code: 'SHOW10', finalCents: 8000 },
+    };
+
+    await (w as any).process(job);
+
+    const cv = d.formatter.formatScored.mock.calls[0][4];
+    expect(cv).toMatchObject({
+      code: 'SHOW10',
+      mode: 'PRICE',
+      finalCents: 8000,
+    });
+  });
+
+  it('edited coupon survives the stale re-scrape (rebuilt against the fresh price)', async () => {
+    const d = makeDeps();
+    d.scraper.scrapePriceView.mockResolvedValue(freshView(9000));
+    const w = makeWorker(d);
+    const job = makeJob('wa');
+    job.timestamp = Date.now() - STALE_MS;
+    job.data.scored.curatorEdits = {
+      coupon: { code: 'SHOW10', finalCents: 8000 },
+    };
+
+    await (w as any).process(job);
+
+    // Price refreshed as usual (only the coupon was edited)…
+    expect(d.scraper.scrapePriceView).toHaveBeenCalledTimes(1);
+    expect(d.formatter.formatScored.mock.calls[0][3].priceCents).toBe(9000);
+    // …but the coupon line is the curator's, not the re-resolved one.
+    const cv = d.formatter.formatScored.mock.calls[0][4];
+    expect(cv).toMatchObject({ code: 'SHOW10', finalCents: 8000 });
+  });
+
+  it('stale digest: edited-price deal is kept without re-scrape, others refresh normally', async () => {
+    const d = makeDeps();
+    d.scraper.scrapePriceView.mockResolvedValue(freshView(15000));
+    const w = makeWorker(d);
+    const job = makeDigestJob();
+    job.timestamp = Date.now() - STALE_MS;
+    job.data.deals[0].scored.deal.raw.priceCents = 8400;
+    job.data.deals[0].scored.curatorEdits = { priceCents: 8400 };
+
+    await (w as any).process(job);
+
+    expect(d.scraper.scrapePriceView).toHaveBeenCalledTimes(1);
+    expect(d.scraper.scrapePriceView).toHaveBeenCalledWith('https://ml/p/MLB2');
+    expect(d.publisher.publish).toHaveBeenCalledTimes(1);
+    const entries = d.formatter.formatDigest.mock.calls[0][0];
+    expect(entries).toHaveLength(2);
+    expect(entries[0].scored.deal.raw.priceCents).toBe(8400);
+    expect(entries[0].priceView).toBeUndefined();
+    expect(entries[1].priceView.priceCents).toBe(15000);
+  });
+
+  it('digest: edited coupon overrides the entry couponView', async () => {
+    const d = makeDeps();
+    const w = makeWorker(d);
+    const job = makeDigestJob();
+    job.data.deals[0].couponView = {
+      code: 'AUTO5',
+      mode: 'PRICE',
+      finalCents: 9500,
+      discountLabel: '-R$ 5',
+      minCents: null,
+      validUntil: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    job.data.deals[0].scored.curatorEdits = {
+      coupon: { code: 'SHOW10', finalCents: 8000 },
+    };
+
+    await (w as any).process(job);
+
+    const entries = d.formatter.formatDigest.mock.calls[0][0];
+    expect(entries[0].couponView).toMatchObject({
+      code: 'SHOW10',
+      finalCents: 8000,
+    });
+    expect(entries[1].couponView).toBeUndefined();
+  });
+});
+
 describe('SendDealWorker WA jitter', () => {
   function setNow(worker: SendDealWorker, t: () => number) {
     (worker as any).now = t;

@@ -13,6 +13,8 @@ export interface DecisionUpsert {
   reasons?: unknown;
   judgeVerdict?: unknown;
   variant?: string;
+  /** CuratorEdits JSON for panel approvals with light edits (issue #6). */
+  edits?: unknown;
 }
 
 export interface CurationDecisionRepo {
@@ -32,6 +34,7 @@ export class PrismaCurationDecisionRepo implements CurationDecisionRepo {
       reasons: (d.reasons as any) ?? undefined,
       judgeVerdict: (d.judgeVerdict as any) ?? undefined,
       variant: d.variant ?? null,
+      edits: (d.edits as any) ?? undefined,
     };
     await (this.prisma as any).curationDecision.upsert({
       where: {

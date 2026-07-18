@@ -9,7 +9,7 @@ jest.mock('@sentry/node', () => ({
 }));
 jest.mock('../src/whatsapp/wa.service');
 
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -110,6 +110,10 @@ describe('Approval queue (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    // Same global pipe main.ts installs — the 400 contract depends on it.
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     prisma = app.get(PrismaService);
     service = app.get(ApprovalQueueService);
     await app.init();
@@ -199,6 +203,87 @@ describe('Approval queue (e2e)', () => {
       where: { catalogId: `ml:${CATALOG_PREFIX}-appr`, stage: 'approval' },
     });
     expect(decision).toMatchObject({ outcome: 'approved', score: 82 });
+  });
+
+  it('POST /approval/:id/approve with edits publishes the edited values and audits them', async () => {
+    await service.dispatchScored([makeScored('edit', 82)]);
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-edit`, status: 'PENDING' },
+    });
+    const edits = {
+      headline: 'Produto editado top',
+      priceCents: 8400,
+      coupon: { code: 'SHOW10', finalCents: 8000 },
+    };
+
+    await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ edits })
+      .expect(201);
+
+    // Contract: the snapshot handed to the send path carries the edits.
+    const [deals] = enqueueScored.mock.calls[0] as unknown as [ScoredDeal[]];
+    expect(deals[0].deal.raw.title).toBe('Produto editado top');
+    expect(deals[0].deal.raw.priceCents).toBe(8400);
+    expect(deals[0].curatorEdits).toEqual(edits);
+
+    // Audit: edits recorded on the pending row and on the decision.
+    const updated = await (prisma as any).pendingDeal.findUnique({
+      where: { id: row.id },
+    });
+    expect(updated.status).toBe('APPROVED');
+    expect(updated.edits).toEqual(edits);
+    const decision = await (prisma as any).curationDecision.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-edit`, stage: 'approval' },
+    });
+    expect(decision).toMatchObject({ outcome: 'approved', edits });
+  });
+
+  it('POST /approval/:id/approve rejects a malformed edits payload (400)', async () => {
+    await service.dispatchScored([makeScored('edit-bad', 82)]);
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-edit-bad`, status: 'PENDING' },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ edits: { priceCents: 'dez reais' } })
+      .expect(400);
+    expect(enqueueScored).not.toHaveBeenCalled();
+  });
+
+  it('POST /approval/:id/preview re-renders the caption live without deciding the row', async () => {
+    await service.dispatchScored([makeScored('prev', 82)]);
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-prev`, status: 'PENDING' },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post(`/approval/${row.id}/preview`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({
+        edits: {
+          headline: 'Preview editado',
+          priceCents: 8400,
+          coupon: { code: 'SHOW10', finalCents: 8000 },
+        },
+      })
+      .expect(201);
+
+    expect(res.body.caption).toContain('➡️ PREVIEW EDITADO');
+    expect(res.body.caption).toContain('✅ Por R$ 84 à vista');
+    expect(res.body.caption).toContain('🎟️ Com o cupom SHOW10: R$ 80');
+    expect(res.body.imageUrl).toBe('https://img/prev.jpg');
+
+    // Pure preview: still PENDING, nothing enqueued, snapshot untouched.
+    expect(enqueueScored).not.toHaveBeenCalled();
+    const after = await (prisma as any).pendingDeal.findUnique({
+      where: { id: row.id },
+    });
+    expect(after.status).toBe('PENDING');
+    expect(after.snapshot.deal.raw.title).toBe('E2E Produto prev');
   });
 
   it('POST /approval/:id/reject discards without enqueueing and audits', async () => {

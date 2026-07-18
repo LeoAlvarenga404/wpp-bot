@@ -8,7 +8,7 @@ import {
   UnauthorizedError,
 } from './api';
 import { DealCard } from './components/DealCard';
-import type { PendingDeal } from './types';
+import type { CuratorEdits, PendingDeal } from './types';
 
 const POLL_MS = 20_000;
 
@@ -52,11 +52,11 @@ export default function App() {
   }, [refresh]);
 
   const decide = useCallback(
-    async (id: string, kind: 'approve' | 'reject') => {
+    async (id: string, kind: 'approve' | 'reject', edits?: CuratorEdits) => {
       const snapshot = deals;
       setDeals((current) => current.filter((d) => d.id !== id));
       try {
-        await (kind === 'approve' ? approveDeal(id) : rejectDeal(id));
+        await (kind === 'approve' ? approveDeal(id, edits) : rejectDeal(id));
         showToast(kind === 'approve' ? 'Aprovado ✓' : 'Rejeitado ✕');
       } catch (err) {
         if (err instanceof GoneError) {
@@ -116,7 +116,7 @@ export default function App() {
             key={deal.id}
             deal={deal}
             now={now}
-            onApprove={(id) => decide(id, 'approve')}
+            onApprove={(id, edits) => decide(id, 'approve', edits)}
             onReject={(id) => decide(id, 'reject')}
           />
         ))}

@@ -80,6 +80,7 @@ class FakeRepo implements ApprovalQueueRepo {
       status: 'PENDING',
       score: d.score,
       snapshot: JSON.parse(JSON.stringify(d.snapshot)) as unknown,
+      edits: null,
       expiresAt: d.expiresAt,
       createdAt: new Date('2026-07-18T12:00:00Z'),
       decidedAt: null,
@@ -123,10 +124,12 @@ class FakeRepo implements ApprovalQueueRepo {
     id: string,
     status: PendingDealStatus,
     decidedAt: Date,
+    edits?: unknown,
   ): Promise<void> {
     const row = this.rows.find((r) => r.id === id)!;
     row.status = status;
     row.decidedAt = decidedAt;
+    if (edits !== undefined) row.edits = edits;
   }
 }
 
@@ -323,6 +326,159 @@ describe('ApprovalQueueService.approve', () => {
 
     expect(result.enqueued).toBe(1);
     expect(d.repo.rows[0].status).toBe('APPROVED');
+  });
+});
+
+describe('ApprovalQueueService.approve with edits', () => {
+  it('applies the headline edit to the snapshot handed to enqueueScored', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    await svc.approve(d.repo.rows[0].id, {
+      headline: 'Fone JBL melhor preço',
+    });
+
+    const [deals] = (d.pipeline.enqueueScored as jest.Mock).mock
+      .calls[0] as unknown as [ScoredDeal[]];
+    expect(deals[0].deal.raw.title).toBe('Fone JBL melhor preço');
+    expect(deals[0].curatorEdits).toEqual({
+      headline: 'Fone JBL melhor preço',
+    });
+  });
+
+  it('applies the price edit and refreshes the discount percent', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]); // 10000 de 20000
+
+    await svc.approve(d.repo.rows[0].id, { priceCents: 8400 });
+
+    const [deals] = (d.pipeline.enqueueScored as jest.Mock).mock
+      .calls[0] as unknown as [ScoredDeal[]];
+    expect(deals[0].deal.raw.priceCents).toBe(8400);
+    expect(deals[0].deal.raw.discountPercent).toBe(58); // 1 - 8400/20000
+    expect(deals[0].curatorEdits).toEqual({ priceCents: 8400 });
+  });
+
+  it('attaches the coupon edit so the send path can override the resolver', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    await svc.approve(d.repo.rows[0].id, {
+      coupon: { code: 'SHOW10', finalCents: 9000 },
+    });
+
+    const [deals] = (d.pipeline.enqueueScored as jest.Mock).mock
+      .calls[0] as unknown as [ScoredDeal[]];
+    expect(deals[0].curatorEdits).toEqual({
+      coupon: { code: 'SHOW10', finalCents: 9000 },
+    });
+    // Coupon edit alone touches neither price nor title.
+    expect(deals[0].deal.raw.priceCents).toBe(10000);
+    expect(deals[0].deal.raw.title).toBe('Produto MLB2');
+  });
+
+  it('empty edits object behaves exactly like an edit-free approve', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    const sd = makeScored('MLB2', 80);
+    await svc.dispatchScored([sd]);
+
+    await svc.approve(d.repo.rows[0].id, {});
+
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
+      JSON.parse(JSON.stringify(sd)),
+    ]);
+  });
+
+  it('records the edits in the decision audit and on the pending row', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+    const edits = { headline: 'Novo título', priceCents: 9000 };
+
+    await svc.approve(d.repo.rows[0].id, edits);
+
+    expect(d.decisions.upserts[0]).toMatchObject({
+      outcome: 'approved',
+      edits,
+    });
+    expect(d.repo.rows[0].edits).toEqual(edits);
+  });
+});
+
+describe('ApprovalQueueService.preview', () => {
+  it('renders the caption with the edits applied, without deciding the row', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    const out = await svc.preview(d.repo.rows[0].id, {
+      headline: 'Fone JBL top',
+      priceCents: 8400,
+      coupon: { code: 'SHOW10', finalCents: 8000 },
+    });
+
+    expect(out.caption).toContain('➡️ FONE JBL TOP');
+    expect(out.caption).toContain('✅ Por R$ 84 à vista  (-58%)');
+    expect(out.caption).toContain('🎟️ Com o cupom SHOW10: R$ 80  (-R$ 4)');
+    expect(out.imageUrl).toBe('https://img/MLB2.jpg');
+    // Pure preview: nothing decided, nothing enqueued, nothing audited.
+    expect(d.repo.rows[0].status).toBe('PENDING');
+    expect(d.pipeline.enqueueScored).not.toHaveBeenCalled();
+    expect(d.decisions.upserts).toHaveLength(0);
+    // The stored snapshot stays pristine — preview never mutates the row.
+    const snapshot = d.repo.rows[0].snapshot as ScoredDeal;
+    expect(snapshot.deal.raw.title).toBe('Produto MLB2');
+    expect(snapshot.deal.raw.priceCents).toBe(10000);
+  });
+
+  it('edited coupon without a final price falls back to the code-only line', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    const out = await svc.preview(d.repo.rows[0].id, {
+      coupon: { code: 'SHOW10' },
+    });
+
+    expect(out.caption).toContain('🎟️ Use o cupom: SHOW10');
+  });
+
+  it('edited coupon replaces the auto-resolved coupon line', async () => {
+    const d = makeDeps({
+      threshold: '90',
+      couponView: {
+        code: 'AUTO5',
+        mode: 'PRICE',
+        finalCents: 9500,
+        discountLabel: '-R$ 5',
+        minCents: null,
+        validUntil: '2027-01-01T00:00:00.000Z',
+      },
+    });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    const out = await svc.preview(d.repo.rows[0].id, {
+      coupon: { code: 'SHOW10', finalCents: 9000 },
+    });
+
+    expect(out.caption).toContain('🎟️ Com o cupom SHOW10: R$ 90');
+    expect(out.caption).not.toContain('AUTO5');
+  });
+
+  it('no edits: preview matches the listPending caption', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+    const [listed] = await svc.listPending();
+
+    const out = await svc.preview(d.repo.rows[0].id, {});
+
+    expect(out.caption).toBe(listed.caption);
   });
 });
 

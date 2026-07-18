@@ -78,6 +78,8 @@ model CurationDecision {
   reasons      Json?
   judgeVerdict Json?
   variant      String?
+  // CuratorEdits JSON for panel approvals with light edits (issue #6).
+  edits        Json?
   firstAt      DateTime @default(now())
   lastAt       DateTime @updatedAt
 
@@ -155,6 +157,8 @@ model PendingDeal {
   status    String    @default("PENDING")
   score     Int
   snapshot  Json
+  // CuratorEdits JSON applied on approval; null when approved untouched.
+  edits     Json?
   expiresAt DateTime
   createdAt DateTime  @default(now())
   decidedAt DateTime?

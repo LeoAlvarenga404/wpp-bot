@@ -12,6 +12,8 @@ export interface PendingDealRow {
   score: number;
   /** Full ScoredDeal JSON captured at dispatch time (see ApprovalQueueService). */
   snapshot: unknown;
+  /** CuratorEdits JSON applied on approval; null when approved untouched. */
+  edits: unknown;
   expiresAt: Date;
   createdAt: Date;
   decidedAt: Date | null;
@@ -35,6 +37,7 @@ export interface ApprovalQueueRepo {
     id: string,
     status: PendingDealStatus,
     decidedAt: Date,
+    edits?: unknown,
   ): Promise<void>;
 }
 
@@ -97,10 +100,15 @@ export class PrismaApprovalQueueRepo implements ApprovalQueueRepo {
     id: string,
     status: PendingDealStatus,
     decidedAt: Date,
+    edits?: unknown,
   ): Promise<void> {
     await (this.prisma as any).pendingDeal.update({
       where: { id },
-      data: { status, decidedAt },
+      data: {
+        status,
+        decidedAt,
+        ...(edits !== undefined ? { edits: edits as any } : {}),
+      },
     });
   }
 }

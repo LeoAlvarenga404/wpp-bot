@@ -29,6 +29,7 @@ import {
   SendJob,
 } from '../queue/queue.types';
 import { keyToString } from '../sources/source.port';
+import { couponViewFromCuratorEdit } from '../shared/curator-edits';
 
 /**
  * Worker that consumes `send-deal` jobs and dispatches them through Baileys.
@@ -146,16 +147,21 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       couponView?: CouponView;
     }> = [];
     for (const d of deals) {
-      if (!stale) {
+      const edits = d.scored.curatorEdits;
+      // A curator-edited price is human-confirmed — never re-scraped, never
+      // dropped as stale (issue #6).
+      if (!stale || edits?.priceCents != null) {
         sendable.push({
           ...d,
           // Re-check coupon validity at send time — never post a stale code
           // (ml-coupons-v1).
-          couponView:
+          couponView: this.effectiveCouponView(
+            d.scored,
             d.couponView &&
-            new Date(d.couponView.validUntil).getTime() > this.now()
+              new Date(d.couponView.validUntil).getTime() > this.now()
               ? d.couponView
               : undefined,
+          ),
         });
         continue;
       }
@@ -170,7 +176,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       sendable.push({
         ...d,
         priceView: fresh.priceView,
-        couponView: fresh.couponView,
+        couponView: this.effectiveCouponView(d.scored, fresh.couponView),
       });
     }
 
@@ -234,7 +240,9 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
         ? job.data.couponView
         : undefined;
 
-    if (this.isStale(job)) {
+    // A curator-edited price is human-confirmed — never re-scraped, never
+    // dropped as stale (issue #6).
+    if (this.isStale(job) && scored.curatorEdits?.priceCents == null) {
       const fresh = await this.refreshPrice(scored);
       if (!fresh) {
         this.counters.stalePriceDrop.inc();
@@ -246,6 +254,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       priceView = fresh.priceView;
       couponView = fresh.couponView;
     }
+    couponView = this.effectiveCouponView(scored, couponView);
 
     const { caption, imageUrl } = await this.formatter.formatScored(
       scored,
@@ -271,6 +280,26 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     }
     this.logger.log(
       `send-deal job ${job.id} ok (${keyStr} -> ${targetJid} via ${channel}, level=${scored.level}, score=${scored.score})`,
+    );
+  }
+
+  /**
+   * A curator-edited coupon (approval panel) always beats whatever the job
+   * carries or the stale re-resolve produced: the human decision IS the
+   * validity, so no expiry re-check applies. Rebuilt against the deal's
+   * current à-vista price (the same basis the automatic resolver uses) so
+   * the "com cupom" line only prints when it still beats that price.
+   */
+  private effectiveCouponView(
+    scored: ScoredDeal,
+    resolved: CouponView | undefined,
+  ): CouponView | undefined {
+    const edit = scored.curatorEdits?.coupon;
+    if (!edit) return resolved;
+    return couponViewFromCuratorEdit(
+      edit,
+      scored.deal.raw.priceCents,
+      new Date(this.now()),
     );
   }
 

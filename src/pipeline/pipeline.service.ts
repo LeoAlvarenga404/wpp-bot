@@ -28,6 +28,7 @@ import {
 import type { PriceView } from '../pricing/price-view';
 import { CouponService } from '../coupon/coupon.service';
 import type { CouponView } from '../coupon/coupon.types';
+import { couponViewFromCuratorEdit } from '../shared/curator-edits';
 import type { CopyVariant } from '../shared/variant';
 import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
@@ -320,6 +321,10 @@ export class PipelineService {
         const i = nextScrape++;
         if (i >= selected.length) return;
         const sd = selected[i].scored;
+        // A curator-edited price was just read off the product page by a
+        // human (approval panel) — it beats the scraper. Skip the scrape so
+        // no PriceView overrides the edited value downstream.
+        if (sd.curatorEdits?.priceCents != null) continue;
         try {
           scrapeResults[i] = await this.priceScraper.scrapePriceView(
             sd.deal.raw.permalink,
@@ -349,6 +354,17 @@ export class PipelineService {
     // final-price math match the number shown to the user.
     const couponViews = new Map<string, CouponView>();
     for (const { scored: sd } of selected) {
+      // Curator-edited coupon (approval panel) replaces the resolver.
+      if (sd.curatorEdits?.coupon) {
+        couponViews.set(
+          keyToString(sd.deal.key),
+          couponViewFromCuratorEdit(
+            sd.curatorEdits.coupon,
+            sd.deal.raw.priceCents,
+          ),
+        );
+        continue;
+      }
       try {
         const cv = await this.coupons.resolveForDeal(
           sd.deal,

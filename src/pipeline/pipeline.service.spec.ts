@@ -669,6 +669,61 @@ describe('PipelineService.enqueueScored', () => {
       }
     });
 
+    it('skips the scrape for a curator-edited price — the human-confirmed value wins', async () => {
+      const d = setup('2');
+      const scraper = {
+        scrapePriceView: jest.fn(async (permalink: string) => {
+          const id = Number(permalink.slice('https://ml/MLB'.length));
+          return priceViewFor(1000 * id);
+        }),
+      };
+      (d.pipeline as any).priceScraper = scraper;
+      const edited = scoredWithPermalink('MLB1', 90);
+      edited.deal.raw.priceCents = 8400; // applied by approve(id, edits)
+      edited.curatorEdits = { priceCents: 8400 };
+      const untouched = scoredWithPermalink('MLB2', 85);
+
+      await d.pipeline.enqueueScored([edited, untouched]);
+
+      // Only the untouched deal is scraped; the edited one keeps 8400.
+      expect(scraper.scrapePriceView).toHaveBeenCalledTimes(1);
+      expect(scraper.scrapePriceView).toHaveBeenCalledWith('https://ml/MLB2');
+      const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+      const byKey = new Map(calls.map(([, data]) => [data.catalogKey, data]));
+      expect(byKey.get('ml:MLB1').priceView).toBeUndefined();
+      expect(byKey.get('ml:MLB1').scored.deal.raw.priceCents).toBe(8400);
+      expect(byKey.get('ml:MLB2').priceView.priceCents).toBe(2000);
+    });
+
+    it('uses the curator-edited coupon instead of the resolver', async () => {
+      const d = setup('2');
+      const resolveForDeal = jest.fn(async () => ({
+        code: 'AUTO5',
+        mode: 'PRICE' as const,
+        finalCents: 9500,
+        discountLabel: '-R$ 5',
+        minCents: null,
+        validUntil: '2027-01-01T00:00:00.000Z',
+      }));
+      (d.pipeline as any).coupons = { resolveForDeal };
+      const edited = scoredWithPermalink('MLB1', 90);
+      edited.curatorEdits = { coupon: { code: 'SHOW10', finalCents: 8000 } };
+      const untouched = scoredWithPermalink('MLB2', 85);
+
+      await d.pipeline.enqueueScored([edited, untouched]);
+
+      // Resolver only runs for the untouched deal.
+      expect(resolveForDeal).toHaveBeenCalledTimes(1);
+      const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+      const byKey = new Map(calls.map(([, data]) => [data.catalogKey, data]));
+      expect(byKey.get('ml:MLB1').couponView).toMatchObject({
+        code: 'SHOW10',
+        mode: 'PRICE',
+        finalCents: 8000,
+      });
+      expect(byKey.get('ml:MLB2').couponView.code).toBe('AUTO5');
+    });
+
     it('an individual scrape failure keeps the API price for that deal only', async () => {
       const d = setup('2');
       const scraper = {

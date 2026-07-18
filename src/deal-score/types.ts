@@ -1,6 +1,7 @@
 // src/deal-score/types.ts
 
 import type { EnrichedDeal } from '../sources/source.port';
+import type { CuratorEdits } from '../shared/curator-edits';
 
 export interface PriceObservation {
   priceCents: number;
@@ -48,6 +49,14 @@ export interface ScoredDeal {
   reasons: ScoreReason[];
   penalties: ScoreReason[];
   factors: Record<string, number>;
+  /**
+   * Present only on deals approved through the curation panel with light
+   * edits (headline / final price / coupon). Rides the BullMQ job JSON so the
+   * pipeline and the send worker can honor the curator's values (skip the
+   * price scrape, override the coupon). Absent = the deal flows exactly as
+   * before the approval queue existed.
+   */
+  curatorEdits?: CuratorEdits;
 }
 
 export interface PriceRaiseOptions {

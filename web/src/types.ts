@@ -26,3 +26,17 @@ export interface PendingDeal {
   createdAt: string;
   expiresAt: string;
 }
+
+// Mirror of CuratorEditsDto (src/curation/dto/approve-deal.dto.ts) — the
+// light-edit contract of the approval card: headline, final price, coupon.
+export interface CuratorCouponEdit {
+  code: string;
+  /** Final price in cents after the coupon. Absent = code-only line. */
+  finalCents?: number;
+}
+
+export interface CuratorEdits {
+  headline?: string;
+  priceCents?: number;
+  coupon?: CuratorCouponEdit;
+}

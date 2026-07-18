@@ -17,6 +17,11 @@ import {
 } from '../pipeline/pipeline.service';
 import { ofertasTemplate } from '../pipeline/templates/template-ofertas';
 import { keyToString } from '../sources/source.port';
+import {
+  couponViewFromCuratorEdit,
+  hasCuratorEdits,
+  type CuratorEdits,
+} from '../shared/curator-edits';
 import { dayString } from '../shared/day';
 import { toHiResImage } from '../shared/hi-res-image';
 import {
@@ -140,8 +145,15 @@ export class ApprovalQueueService {
    * enqueue may still drop the deal (dedup, no active target) — the decision
    * is audited as approved either way; `enqueued` in the result tells the
    * caller what actually hit the queue.
+   *
+   * Optional light edits (headline / final price / coupon — issue #6) are
+   * applied to the snapshot before it re-enters the pipeline and travel on
+   * `ScoredDeal.curatorEdits` so the send path honors them end to end.
    */
-  async approve(id: string): Promise<{
+  async approve(
+    id: string,
+    edits?: CuratorEdits,
+  ): Promise<{
     id: string;
     catalogId: string;
     enqueued: number;
@@ -149,15 +161,58 @@ export class ApprovalQueueService {
   }> {
     const row = await this.mustBePending(id);
     const sd = row.snapshot as ScoredDeal;
+    const applied = hasCuratorEdits(edits) ? edits : undefined;
+    if (applied) this.applyEdits(sd, applied);
     const result = await this.pipeline.enqueueScored([sd]);
-    await this.repo.markDecided(row.id, 'APPROVED', this.now());
-    await this.audit(row, 'approved');
+    await this.repo.markDecided(row.id, 'APPROVED', this.now(), applied);
+    await this.audit(row, 'approved', applied);
     return {
       id: row.id,
       catalogId: row.catalogId,
       enqueued: result.enqueued,
       targets: result.targets,
     };
+  }
+
+  /**
+   * Live-preview seam for the panel's edit mode: renders the exact caption
+   * `approve(id, edits)` would publish, without deciding, enqueueing or
+   * auditing anything. Works on a clone — the stored snapshot stays pristine
+   * until the curator actually approves.
+   */
+  async preview(
+    id: string,
+    edits?: CuratorEdits,
+  ): Promise<{ caption: string; imageUrl: string }> {
+    const row = await this.mustBePending(id);
+    const sd = JSON.parse(JSON.stringify(row.snapshot)) as ScoredDeal;
+    const applied = hasCuratorEdits(edits) ? edits : undefined;
+    if (applied) this.applyEdits(sd, applied);
+    const couponView = applied?.coupon
+      ? couponViewFromCuratorEdit(
+          applied.coupon,
+          sd.deal.raw.priceCents,
+          this.now(),
+        )
+      : await this.resolveCoupon(sd);
+    return this.renderCaption(sd, couponView);
+  }
+
+  /**
+   * The exact WA caption the group would see, rendered from the snapshot by
+   * the same template the send path uses. The link is the raw permalink —
+   * previews never mint affiliate/short links.
+   */
+  private renderCaption(
+    sd: ScoredDeal,
+    couponView: CouponView | undefined,
+  ): { caption: string; imageUrl: string } {
+    const caption = ofertasTemplate({
+      sd,
+      link: sd.deal.raw.permalink,
+      couponView,
+    });
+    return { caption, imageUrl: toHiResImage(sd.deal.raw.thumbnail || '') };
   }
 
   async reject(id: string): Promise<{ id: string; catalogId: string }> {
@@ -204,6 +259,25 @@ export class ApprovalQueueService {
     await this.repo.create({ catalogId, ...data });
   }
 
+  /**
+   * Mutates the snapshot in place with the curator's values. An edited price
+   * also refreshes the discount percent so the "-N%" tag matches what the
+   * message will show.
+   */
+  private applyEdits(sd: ScoredDeal, edits: CuratorEdits): void {
+    const raw = sd.deal.raw;
+    if (edits.headline != null) raw.title = edits.headline;
+    if (edits.priceCents != null) {
+      raw.priceCents = edits.priceCents;
+      if (raw.originalPriceCents != null && raw.originalPriceCents > 0) {
+        raw.discountPercent = Math.round(
+          (1 - edits.priceCents / raw.originalPriceCents) * 100,
+        );
+      }
+    }
+    sd.curatorEdits = edits;
+  }
+
   private async mustBePending(id: string): Promise<PendingDealRow> {
     const row = await this.repo.findById(id);
     if (!row) throw new NotFoundException(`Pending deal '${id}' not found`);
@@ -220,11 +294,10 @@ export class ApprovalQueueService {
 
   private async toSummary(row: PendingDealRow): Promise<PendingSummary> {
     const sd = row.snapshot as ScoredDeal;
-    const caption = ofertasTemplate({
+    const { caption, imageUrl } = this.renderCaption(
       sd,
-      link: sd.deal.raw.permalink,
-      couponView: await this.resolveCoupon(sd),
-    });
+      await this.resolveCoupon(sd),
+    );
     return {
       id: row.id,
       catalogId: row.catalogId,
@@ -240,7 +313,7 @@ export class ApprovalQueueService {
         permalink: sd.deal.raw.permalink,
       },
       caption,
-      imageUrl: toHiResImage(sd.deal.raw.thumbnail || ''),
+      imageUrl,
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
     };
@@ -268,6 +341,7 @@ export class ApprovalQueueService {
   private async audit(
     row: PendingDealRow,
     outcome: 'approved' | 'rejected' | 'expired',
+    edits?: CuratorEdits,
   ): Promise<void> {
     const sd = row.snapshot as ScoredDeal;
     try {
@@ -279,6 +353,7 @@ export class ApprovalQueueService {
         score: row.score,
         priceCents: sd?.deal?.raw?.priceCents,
         reasons: sd?.reasons,
+        edits,
       });
     } catch (err) {
       this.logger.warn(
