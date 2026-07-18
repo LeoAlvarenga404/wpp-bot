@@ -84,5 +84,9 @@ describe('PrismaCurationDecisionRepo', () => {
     const dateUsed = callArgs.where.firstAt.gte;
     const expectedTime = new Date().getTime() - 7 * 24 * 3600 * 1000;
     expect(Math.abs(dateUsed.getTime() - expectedTime)).toBeLessThan(1000 * 5); // 5s tolerance
+
+    // Calibration must count only human decisions on scored deals — never the
+    // gate's automated drops (dedup, score_min, …) nor manual deals.
+    expect(callArgs.where.stage).toBe('approval');
   });
 });
