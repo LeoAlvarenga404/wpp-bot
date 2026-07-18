@@ -111,4 +111,49 @@ describe('ManualDealService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(queue.createManual).not.toHaveBeenCalled();
   });
+
+  describe('createGeneric', () => {
+    it('hashes the permalink for externalId and creates a pending card', async () => {
+      const queue = makeQueue();
+      const svc = new ManualDealService([], queue);
+      
+      const payload = {
+        store: 'shopee',
+        title: 'Produto Shopee',
+        priceCents: 5000,
+        thumbnail: 'https://img/shopee.jpg',
+        permalink: 'https://shopee.com.br/produto-123',
+      };
+      
+      await svc.createGeneric(payload);
+      
+      expect(queue.createManual).toHaveBeenCalledTimes(1);
+      const [sd] = queue.createManual.mock.calls[0];
+      
+      expect(sd.deal.key.source).toBe('shopee');
+      expect(sd.deal.key.externalId.length).toBe(12); // md5 substring
+      expect(sd.deal.raw.title).toBe('Produto Shopee');
+      expect(sd.deal.raw.priceCents).toBe(5000);
+      expect(sd.deal.raw.discountPercent).toBe(0);
+      expect(sd.deal.extras.manual).toBe(true);
+    });
+
+    it('calculates the discount correctly when originalPriceCents is provided', async () => {
+      const queue = makeQueue();
+      const svc = new ManualDealService([], queue);
+      
+      await svc.createGeneric({
+        store: 'kabum',
+        title: 'Placa de Vídeo',
+        priceCents: 5000,
+        originalPriceCents: 10000, // 50% discount
+        thumbnail: 'https://img/kabum.jpg',
+        permalink: 'https://kabum.com.br/produto',
+      });
+      
+      const [sd] = queue.createManual.mock.calls[0];
+      expect(sd.deal.raw.discountPercent).toBe(50);
+      expect(sd.deal.key.source).toBe('kabum');
+    });
+  });
 });

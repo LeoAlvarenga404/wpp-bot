@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import {
   BadRequestException,
   Inject,
@@ -14,7 +15,10 @@ import {
   ManualResolveError,
   toScoredDeal,
   type ManualDealResolver,
+  type ResolvedManualDeal,
 } from './manual-resolver.port';
+import { CreateGenericManualDto } from '../dto/create-generic-manual.dto';
+import type { SourceId } from '../../sources/source.port';
 
 /**
  * Entry point for the panel's "deal manual" flow (issue #8). Picks the first
@@ -63,6 +67,34 @@ export class ManualDealService {
       }
       throw err;
     }
+
+    return this.approvalQueue.createManual(toScoredDeal(resolved));
+  }
+
+  async createGeneric(dto: CreateGenericManualDto): Promise<PendingSummary> {
+    const externalId = createHash('md5')
+      .update(dto.permalink)
+      .digest('hex')
+      .substring(0, 12);
+
+    let discountPercent = 0;
+    if (dto.originalPriceCents && dto.originalPriceCents > dto.priceCents) {
+      discountPercent = Math.round(
+        ((dto.originalPriceCents - dto.priceCents) / dto.originalPriceCents) * 100,
+      );
+    }
+
+    const resolved: ResolvedManualDeal = {
+      key: { source: dto.store as SourceId, externalId },
+      source: dto.store as SourceId,
+      title: dto.title,
+      priceCents: dto.priceCents,
+      originalPriceCents: dto.originalPriceCents ?? null,
+      discountPercent,
+      thumbnail: dto.thumbnail,
+      permalink: dto.permalink,
+      installmentsNoInterest: false,
+    };
 
     return this.approvalQueue.createManual(toScoredDeal(resolved));
   }
