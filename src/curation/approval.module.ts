@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CouponModule } from '../coupon/coupon.module';
 import { DbModule } from '../db/db.module';
+import { DedupModule } from '../dedup/dedup.module';
 import { OpsConfigModule } from '../ops-config/ops-config.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
 import {
@@ -24,6 +25,7 @@ import { CurationModule } from './curation.module';
     OpsConfigModule,
     CurationModule,
     CouponModule,
+    DedupModule,
   ],
   controllers: [ApprovalController],
   providers: [

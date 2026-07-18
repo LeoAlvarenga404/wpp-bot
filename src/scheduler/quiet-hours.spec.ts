@@ -1,4 +1,4 @@
-import { isQuietHours } from './quiet-hours';
+import { isQuietHours, msUntilQuietEnd } from './quiet-hours';
 
 /**
  * Build a Date that yields the desired hour when formatted as
@@ -60,5 +60,30 @@ describe('isQuietHours (edge cases)', () => {
     // -1 mod 24 = 23, 31 mod 24 = 7 → behaves like (23, 7) wrap-around.
     expect(isQuietHours(spDateAtHour(23, 30), -1, 31)).toBe(true);
     expect(isQuietHours(spDateAtHour(10, 0), -1, 31)).toBe(false);
+  });
+});
+
+describe('msUntilQuietEnd', () => {
+  it('returns 0 outside the quiet window', () => {
+    expect(msUntilQuietEnd(spDateAtHour(10, 0), 23, 7)).toBe(0);
+  });
+
+  it('counts down to the window end inside a wrap-around window', () => {
+    // 23:30 local, window 23 -> 7: 7h30min left.
+    expect(msUntilQuietEnd(spDateAtHour(23, 30), 23, 7)).toBe(7.5 * 3_600_000);
+    // 06:59 local: one minute left.
+    expect(msUntilQuietEnd(spDateAtHour(6, 59), 23, 7)).toBe(60_000);
+  });
+
+  it('counts down inside a non-wrapping window', () => {
+    // 02:00 local, window 1 -> 5: 3h left.
+    expect(msUntilQuietEnd(spDateAtHour(2, 0), 1, 5)).toBe(3 * 3_600_000);
+  });
+
+  it('start === end (always quiet) delays to the next endHour boundary', () => {
+    // 03:00 local, end 5 -> 2h.
+    expect(msUntilQuietEnd(spDateAtHour(3, 0), 5, 5)).toBe(2 * 3_600_000);
+    // 05:00 local exactly: full 24h until the next boundary.
+    expect(msUntilQuietEnd(spDateAtHour(5, 0), 5, 5)).toBe(24 * 3_600_000);
   });
 });

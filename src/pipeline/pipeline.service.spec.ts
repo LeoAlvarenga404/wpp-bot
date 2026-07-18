@@ -588,6 +588,43 @@ describe('PipelineService.enqueueScored', () => {
     expect(d.curation.getLowestPriceBadge).not.toHaveBeenCalled();
   });
 
+  describe('urgent dispatch (issue #7)', () => {
+    it('urgent: job carries urgent flag, jumps the queue (lifo) and gets a fresh jobId', async () => {
+      const d = makeDeps({ rawDeals: [] });
+      d.targets.getActiveTargets.mockResolvedValue([
+        { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      ]);
+
+      await d.pipeline.enqueueScored([scoredFixture()], 3, {
+        urgent: true,
+        uniqueJobId: true,
+      });
+
+      const [name, data, opts] = (d.sendQueue.add as jest.Mock).mock.calls[0];
+      expect(name).toBe('send-deal');
+      expect(data.urgent).toBe(true);
+      expect(opts.lifo).toBe(true);
+      // Coalescing jobId is `<key>_<jid>`; a unique suffix defeats the
+      // completed-job coalesce so a human-decided resend is never swallowed.
+      expect(opts.jobId).toMatch(/^ml_MLB1_123@g\.us_/);
+      expect(opts.jobId).not.toBe('ml_MLB1_123@g.us');
+    });
+
+    it('non-urgent enqueue keeps the coalescing jobId and no lifo', async () => {
+      const d = makeDeps({ rawDeals: [] });
+      d.targets.getActiveTargets.mockResolvedValue([
+        { jid: '123@g.us', name: 'g', active: true, channel: 'wa' },
+      ]);
+
+      await d.pipeline.enqueueScored([scoredFixture()], 3);
+
+      const [, data, opts] = (d.sendQueue.add as jest.Mock).mock.calls[0];
+      expect(data.urgent).toBeUndefined();
+      expect(opts.lifo).toBeUndefined();
+      expect(opts.jobId).toBe('ml_MLB1_123@g.us');
+    });
+  });
+
   describe('parallel price scrape', () => {
     function scoredWithPermalink(id: string, score: number): ScoredDeal {
       const raw = rawFor(id);

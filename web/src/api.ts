@@ -1,4 +1,4 @@
-import type { CuratorEdits, PendingDeal } from './types';
+import type { ApproveOptions, CuratorEdits, PendingDeal } from './types';
 
 const API_KEY_STORAGE = 'wpp-panel-api-key';
 
@@ -27,6 +27,16 @@ export class GoneError extends Error {
   }
 }
 
+/**
+ * 409 { code: 'recently_posted' } — the product was published < 14 days ago
+ * and approving needs the curator's explicit dedup override.
+ */
+export class RecentlyPostedError extends Error {
+  constructor(public readonly days: number) {
+    super(`postado há ${days} dia(s)`);
+  }
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit & { json?: unknown },
@@ -45,7 +55,12 @@ async function request<T>(
   if (res.status === 409 || res.status === 404) {
     const body = (await res.json().catch(() => null)) as {
       message?: string;
+      code?: string;
+      days?: number;
     } | null;
+    if (body?.code === 'recently_posted') {
+      throw new RecentlyPostedError(body.days ?? 0);
+    }
     throw new GoneError(body?.message ?? `HTTP ${res.status}`);
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -59,12 +74,23 @@ export async function fetchPending(): Promise<PendingDeal[]> {
 
 export async function approveDeal(
   id: string,
-  edits?: CuratorEdits,
-): Promise<void> {
-  await request(`/approval/${encodeURIComponent(id)}/approve`, {
-    method: 'POST',
-    ...(edits ? { json: { edits } } : {}),
-  });
+  opts?: ApproveOptions,
+): Promise<{ enqueued: number }> {
+  const hasBody = opts && (opts.edits || opts.urgent || opts.dedupOverride);
+  // enqueued can be 0: the send path may still drop the deal (no active
+  // target, price-raise block). The caller must not report "sent".
+  return request<{ enqueued: number }>(
+    `/approval/${encodeURIComponent(id)}/approve`,
+    {
+      method: 'POST',
+      ...(hasBody ? { json: opts } : {}),
+    },
+  );
+}
+
+/** Shared repost confirmation — the same copy the card and the 409 retry use. */
+export function confirmRepost(days: number): boolean {
+  return window.confirm(`Postado há ${days} dia(s). Enviar mesmo assim?`);
 }
 
 /** Server-rendered live preview of the caption with the edits applied. */

@@ -28,6 +28,11 @@ export interface SendDealJob {
   priceView?: PriceView;
   /** Matched ML coupon line (ml-coupons-v1). Absent = no coupon for this deal. */
   couponView?: CouponView;
+  /**
+   * "Enviar agora" from the approval panel (issue #7): skips the quiet-hours
+   * hold at send time and uses the short urgent jitter. Absent = normal send.
+   */
+  urgent?: boolean;
   scored: ScoredDeal;
 }
 

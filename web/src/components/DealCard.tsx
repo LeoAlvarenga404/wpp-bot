@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { previewDeal } from '../api';
-import type { CuratorEdits, PendingDeal } from '../types';
+import { confirmRepost, previewDeal } from '../api';
+import type { ApproveOptions, CuratorEdits, PendingDeal } from '../types';
 import { CaptionPreview } from './CaptionPreview';
 
 const PREVIEW_DEBOUNCE_MS = 400;
@@ -68,10 +68,12 @@ export function DealCard({
   deal: PendingDeal;
   now: number;
   /** Resolve when the API call settles; the card disables itself meanwhile. */
-  onApprove: (id: string, edits?: CuratorEdits) => Promise<void>;
+  onApprove: (id: string, opts?: ApproveOptions) => Promise<void>;
   onReject: (id: string) => Promise<void>;
 }) {
-  const [acting, setActing] = useState<'approve' | 'reject' | null>(null);
+  const [acting, setActing] = useState<'approve' | 'urgent' | 'reject' | null>(
+    null,
+  );
   const [editing, setEditing] = useState(false);
   const [fields, setFields] = useState<EditFields>(EMPTY_FIELDS);
   const [preview, setPreview] = useState<{
@@ -116,12 +118,23 @@ export function DealCard({
     parsePriceToCents(fields.couponPrice) == null;
   const invalidEdits = editing && (priceInvalid || couponPriceInvalid);
 
-  const act = async (kind: 'approve' | 'reject') => {
+  const act = async (kind: 'approve' | 'urgent' | 'reject') => {
+    if (kind !== 'reject' && deal.postedDaysAgo != null) {
+      // Dedup as a warning, not a wall: reposting inside the 14d window is a
+      // conscious human decision, confirmed here and audited server-side.
+      if (!confirmRepost(deal.postedDaysAgo)) return;
+    }
     setActing(kind);
     try {
-      await (kind === 'approve'
-        ? onApprove(deal.id, editing ? edits : undefined)
-        : onReject(deal.id));
+      if (kind === 'reject') {
+        await onReject(deal.id);
+      } else {
+        await onApprove(deal.id, {
+          edits: editing ? edits : undefined,
+          urgent: kind === 'urgent' || undefined,
+          dedupOverride: deal.postedDaysAgo != null || undefined,
+        });
+      }
     } finally {
       setActing(null);
     }
@@ -166,6 +179,13 @@ export function DealCard({
           {editing ? 'Fechar ✕' : '✏️ Editar'}
         </button>
       </header>
+
+      {deal.postedDaysAgo != null && (
+        <p className="mb-2 rounded-lg bg-amber-950 px-2.5 py-1.5 text-xs font-semibold text-amber-400">
+          ⚠️ Postado há {deal.postedDaysAgo} dia
+          {deal.postedDaysAgo === 1 ? '' : 's'} — reenvio exige confirmação
+        </p>
+      )}
 
       <CaptionPreview
         caption={editing && preview ? preview.caption : deal.caption}
@@ -229,7 +249,7 @@ export function DealCard({
         </ul>
       )}
 
-      <footer className="mt-3 grid grid-cols-2 gap-2">
+      <footer className="mt-3 grid grid-cols-3 gap-2">
         <button
           type="button"
           disabled={acting !== null}
@@ -247,8 +267,17 @@ export function DealCard({
           {acting === 'approve'
             ? '…'
             : editing && edits
-              ? '✓ Aprovar editado'
+              ? '✓ Editado'
               : '✓ Aprovar'}
+        </button>
+        <button
+          type="button"
+          disabled={acting !== null || invalidEdits}
+          onClick={() => void act('urgent')}
+          title="Envia na hora: fura a fila e as quiet hours (jitter anti-ban mantido)"
+          className="rounded-lg bg-amber-600 py-3 text-base font-semibold text-white active:bg-amber-500 disabled:opacity-50"
+        >
+          {acting === 'urgent' ? '…' : '⚡ Agora'}
         </button>
       </footer>
     </article>

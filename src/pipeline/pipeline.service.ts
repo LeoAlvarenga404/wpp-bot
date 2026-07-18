@@ -40,6 +40,17 @@ export interface EnqueueResult {
   topScore: number | null;
 }
 
+export interface EnqueueOptions {
+  /** Urgent send: job jumps the queue (LIFO) and carries the urgent flag. */
+  urgent?: boolean;
+  /**
+   * Suffix the coalescing jobId with a timestamp so a completed job for the
+   * same (deal, target) can't swallow this enqueue — required for urgent
+   * sends and curator dedup overrides (human said "send", so send).
+   */
+  uniqueJobId?: boolean;
+}
+
 @Injectable()
 export class PipelineService {
   private readonly logger = new Logger(PipelineService.name);
@@ -253,6 +264,7 @@ export class PipelineService {
   async enqueueScored(
     scored: ScoredDeal[],
     overrideMax?: number,
+    opts?: EnqueueOptions,
   ): Promise<EnqueueResult> {
     const num = (k: string, def: number) =>
       Number(this.config.get<string>(k, String(def)));
@@ -404,7 +416,10 @@ export class PipelineService {
       // jobId to contain ':' when it splits into exactly 3 segments (legacy
       // repeatable-job compat) — catalogKey/jid can contain ':' themselves,
       // so avoid it entirely instead of relying on the segment count.
-      const jobId = `${catalogKey}_${target.jid}`.replace(/:/g, '_');
+      // uniqueJobId (urgent / dedup override) appends a timestamp so the
+      // completed-job coalesce can't swallow a human-decided resend.
+      let jobId = `${catalogKey}_${target.jid}`.replace(/:/g, '_');
+      if (opts?.uniqueJobId) jobId += `_${Date.now()}`;
       try {
         await this.sendQueue.add(
           'send-deal',
@@ -417,8 +432,11 @@ export class PipelineService {
             trustBadge,
             priceView: priceViews.get(catalogKey),
             couponView: couponViews.get(catalogKey),
+            ...(opts?.urgent ? { urgent: true } : {}),
           },
-          { jobId },
+          // LIFO puts the urgent job at the head of the wait list — it is
+          // picked next, ahead of everything already queued.
+          { jobId, ...(opts?.urgent ? { lifo: true } : {}) },
         );
         enqueued++;
         posted.get(catalogKey)!.sent = true;

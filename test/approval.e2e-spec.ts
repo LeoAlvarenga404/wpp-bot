@@ -17,6 +17,7 @@ import { App } from 'supertest/types';
 import { CouponModule } from '../src/coupon/coupon.module';
 import { PrismaService } from '../src/db/prisma.service';
 import { DbModule } from '../src/db/db.module';
+import { DedupModule } from '../src/dedup/dedup.module';
 import { OpsConfigModule } from '../src/ops-config/ops-config.module';
 import { ApprovalController } from '../src/curation/approval.controller';
 import { ApprovalQueueService } from '../src/curation/approval-queue.service';
@@ -95,6 +96,7 @@ describe('Approval queue (e2e)', () => {
         DbModule,
         OpsConfigModule,
         CouponModule,
+        DedupModule,
       ],
       controllers: [ApprovalController],
       providers: [
@@ -125,6 +127,9 @@ describe('Approval queue (e2e)', () => {
       where: { catalogId: { contains: CATALOG_PREFIX } },
     });
     await (prisma as any).curationDecision.deleteMany({
+      where: { catalogId: { contains: CATALOG_PREFIX } },
+    });
+    await (prisma as any).dedupEntry.deleteMany({
       where: { catalogId: { contains: CATALOG_PREFIX } },
     });
     await app.close();
@@ -284,6 +289,86 @@ describe('Approval queue (e2e)', () => {
     });
     expect(after.status).toBe('PENDING');
     expect(after.snapshot.deal.raw.title).toBe('E2E Produto prev');
+  });
+
+  it('urgent approve passes the urgent flag to the send path and audits approval_urgent', async () => {
+    await service.dispatchScored([makeScored('urg', 82)]);
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-urg`, status: 'PENDING' },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ urgent: true })
+      .expect(201);
+
+    expect(enqueueScored).toHaveBeenCalledTimes(1);
+    const call = enqueueScored.mock.calls[0] as unknown as [
+      ScoredDeal[],
+      number | undefined,
+      { urgent?: boolean; uniqueJobId?: boolean } | undefined,
+    ];
+    expect(call[2]).toMatchObject({ urgent: true, uniqueJobId: true });
+
+    const urgentRow = await (prisma as any).curationDecision.findFirst({
+      where: {
+        catalogId: `ml:${CATALOG_PREFIX}-urg`,
+        stage: 'approval_urgent',
+      },
+    });
+    expect(urgentRow).toMatchObject({ outcome: 'approved', score: 82 });
+  });
+
+  it('recently posted: card warns, approve 409s without override, proceeds and audits with it', async () => {
+    await service.dispatchScored([makeScored('dedup', 82)]);
+    // Posted 2 days ago -> inside the 14d window.
+    await (prisma as any).dedupEntry.create({
+      data: {
+        catalogId: `ml:${CATALOG_PREFIX}-dedup`,
+        postedAt: new Date(Date.now() - 2 * 24 * 3_600_000),
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get('/approval/pending')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .expect(200);
+    const card = list.body.pending.find(
+      (p: { catalogId: string }) =>
+        p.catalogId === `ml:${CATALOG_PREFIX}-dedup`,
+    );
+    expect(card.postedDaysAgo).toBe(2);
+
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-dedup`, status: 'PENDING' },
+    });
+
+    // Without the override: refused, nothing enqueued, still pending.
+    const conflict = await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({})
+      .expect(409);
+    expect(conflict.body.code).toBe('recently_posted');
+    expect(conflict.body.days).toBe(2);
+    expect(enqueueScored).not.toHaveBeenCalled();
+
+    // With the human override: proceeds and audits the override.
+    await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ dedupOverride: true })
+      .expect(201);
+    expect(enqueueScored).toHaveBeenCalledTimes(1);
+
+    const override = await (prisma as any).curationDecision.findFirst({
+      where: {
+        catalogId: `ml:${CATALOG_PREFIX}-dedup`,
+        stage: 'dedup_override',
+      },
+    });
+    expect(override).toMatchObject({ outcome: 'approved', score: 82 });
   });
 
   it('POST /approval/:id/reject discards without enqueueing and audits', async () => {

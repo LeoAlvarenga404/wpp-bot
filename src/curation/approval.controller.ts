@@ -15,7 +15,10 @@ export class ApprovalController {
 
   @Post(':id/approve')
   async approve(@Param('id') id: string, @Body() body: ApproveDealDto) {
-    return this.approvalQueue.approve(id, body.edits);
+    return this.approvalQueue.approve(id, body.edits, {
+      urgent: body.urgent,
+      dedupOverride: body.dedupOverride,
+    });
   }
 
   /** Live preview of the edited caption — renders, never decides. */

@@ -34,3 +34,34 @@ export function isQuietHours(
   // Wrap-around, e.g. start=23, end=7 -> quiet at 23,0,1,2,3,4,5,6
   return hour >= start || hour < end;
 }
+
+/**
+ * Milliseconds from `now` until the quiet window ends (the first instant of
+ * `endHour` local time). 0 when `now` is not inside the window. Used by the
+ * send worker to park non-urgent jobs during quiet hours (issue #7).
+ */
+export function msUntilQuietEnd(
+  now: Date,
+  startHour: number,
+  endHour: number,
+  tz: string = 'America/Sao_Paulo',
+): number {
+  if (!isQuietHours(now, startHour, endHour, tz)) return 0;
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+    timeZone: tz,
+  }).formatToParts(now);
+  const get = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value ?? '0');
+  let hour = get('hour');
+  if (hour === 24) hour = 0; // same ICU quirk isQuietHours normalizes
+
+  const end = ((endHour % 24) + 24) % 24;
+  let hoursAhead = end - hour;
+  if (hoursAhead <= 0) hoursAhead += 24;
+  return hoursAhead * 3_600_000 - get('minute') * 60_000 - get('second') * 1000;
+}

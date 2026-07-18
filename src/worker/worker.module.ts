@@ -3,6 +3,7 @@ import { AffiliateModule } from '../affiliate/affiliate.module';
 import { CouponModule } from '../coupon/coupon.module';
 import { DedupModule } from '../dedup/dedup.module';
 import { MetricsModule } from '../metrics/metrics.module';
+import { OpsConfigModule } from '../ops-config/ops-config.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
 import { PublisherModule } from '../publisher/publisher.module';
 import { SendDealWorker } from './send-deal.worker';
@@ -17,6 +18,9 @@ import { SendDealWorker } from './send-deal.worker';
     // (same providers the pipeline uses at enqueue time).
     AffiliateModule,
     CouponModule,
+    // Quiet-hours hold at send time (issue #7) reads the panel-editable
+    // master switch.
+    OpsConfigModule,
   ],
   providers: [SendDealWorker],
 })

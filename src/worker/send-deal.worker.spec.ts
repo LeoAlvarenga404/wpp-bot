@@ -6,6 +6,7 @@ jest.mock('@sentry/node', () => ({
 }));
 jest.mock('../whatsapp/wa.service');
 
+import { DelayedError } from 'bullmq';
 import { SendDealWorker } from './send-deal.worker';
 
 const STALE_MS = 11 * 60_000; // > default SEND_MAX_JOB_AGE_MIN (10)
@@ -39,6 +40,8 @@ function makeDeps() {
   };
   const scraper = { scrapePriceView: jest.fn().mockResolvedValue(null) };
   const coupons = { resolveForDeal: jest.fn().mockResolvedValue(null) };
+  // Default: quiet hours master switch off — sends flow like before #7.
+  const opsConfig = { quietHoursEnabled: jest.fn().mockResolvedValue(false) };
   return {
     publisher,
     registry,
@@ -49,6 +52,7 @@ function makeDeps() {
     config,
     scraper,
     coupons,
+    opsConfig,
   };
 }
 
@@ -63,6 +67,7 @@ function makeWorker(d: ReturnType<typeof makeDeps>): SendDealWorker {
     d.config as any,
     d.scraper,
     d.coupons as any,
+    d.opsConfig as any,
   );
   // Never actually wait in unit tests.
   (w as any).sleep = jest.fn().mockResolvedValue(undefined);
@@ -580,6 +585,100 @@ describe('SendDealWorker curator edits (approval panel)', () => {
       finalCents: 8000,
     });
     expect(entries[1].couponView).toBeUndefined();
+  });
+});
+
+describe('SendDealWorker quiet hours + urgent (issue #7)', () => {
+  function setNow(worker: SendDealWorker, t: () => number) {
+    (worker as any).now = t;
+  }
+
+  /** Quiet switch on + QUIET_START == QUIET_END -> always inside the window. */
+  function quietDeps() {
+    const d = makeDeps();
+    d.opsConfig.quietHoursEnabled.mockResolvedValue(true);
+    d.config.get.mockImplementation((key: string) => {
+      if (key === 'QUIET_START') return '5';
+      if (key === 'QUIET_END') return '5';
+      return undefined;
+    });
+    return d;
+  }
+
+  it('non-urgent job during quiet hours is delayed until the window ends, never published', async () => {
+    const d = quietDeps();
+    const w = makeWorker(d);
+    const t = 1_000_000_000;
+    setNow(w, () => t);
+    const job = makeJob('wa');
+    job.moveToDelayed = jest.fn().mockResolvedValue(undefined);
+
+    await expect((w as any).process(job, 'tok')).rejects.toThrow(DelayedError);
+
+    expect(d.publisher.publish).not.toHaveBeenCalled();
+    expect(job.moveToDelayed).toHaveBeenCalledTimes(1);
+    const [ts, token] = job.moveToDelayed.mock.calls[0];
+    expect(ts).toBeGreaterThan(t);
+    expect(token).toBe('tok');
+  });
+
+  it('urgent job pierces quiet hours and publishes immediately', async () => {
+    const d = quietDeps();
+    const w = makeWorker(d);
+    const job = makeJob('wa');
+    job.data.urgent = true;
+    job.moveToDelayed = jest.fn();
+
+    await (w as any).process(job, 'tok');
+
+    expect(job.moveToDelayed).not.toHaveBeenCalled();
+    expect(d.publisher.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('quiet master switch off: non-urgent publishes even inside the window', async () => {
+    const d = quietDeps();
+    d.opsConfig.quietHoursEnabled.mockResolvedValue(false);
+    const w = makeWorker(d);
+    const job = makeJob('wa');
+    job.moveToDelayed = jest.fn();
+
+    await (w as any).process(job);
+
+    expect(job.moveToDelayed).not.toHaveBeenCalled();
+    expect(d.publisher.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('digest jobs also respect the quiet-hours hold', async () => {
+    const d = quietDeps();
+    const w = makeWorker(d);
+    const job = makeDigestJob();
+    job.moveToDelayed = jest.fn().mockResolvedValue(undefined);
+
+    await expect((w as any).process(job, 'tok')).rejects.toThrow(DelayedError);
+    expect(d.publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('urgent keeps the WA anti-ban jitter, just a few seconds instead of the pacing window', async () => {
+    const d = makeDeps();
+    const w = makeWorker(d);
+    const t = 1_000_000;
+    setNow(w, () => t);
+    (w as any).random = () => 0.5;
+
+    const first = makeJob('wa');
+    first.data.urgent = true;
+    first.timestamp = t;
+    await (w as any).process(first);
+    expect((w as any).sleep).not.toHaveBeenCalled();
+
+    const second = makeJob('wa');
+    second.data.urgent = true;
+    second.timestamp = t;
+    await (w as any).process(second);
+
+    // defaults: 2000 + 0.5 * (8000 - 2000) = 5000 — short, but NEVER zero.
+    expect((w as any).sleep).toHaveBeenCalledTimes(1);
+    expect((w as any).sleep).toHaveBeenCalledWith(5_000);
   });
 });
 

@@ -29,6 +29,16 @@ export class DedupService implements OnModuleInit {
   }
 
   /**
+   * When was this catalogId last posted? Null when never posted (or already
+   * GC'd out of the window). Used by the approval panel to render the
+   * "postado há N dias" dedup warning (issue #7).
+   */
+  async lastPostedAt(catalogId: string): Promise<Date | null> {
+    if (!catalogId) return null;
+    return this.repo.getPostedAt(catalogId);
+  }
+
+  /**
    * Was this catalogId posted within the last `windowDays` days?
    */
   async wasRecentlyPosted(

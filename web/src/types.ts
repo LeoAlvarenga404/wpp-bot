@@ -23,8 +23,23 @@ export interface PendingDeal {
   };
   caption: string;
   imageUrl: string;
+  /**
+   * Days since this product was last published when inside the dedup window;
+   * null otherwise. Non-null renders the "postado há N dias" warning and
+   * approving requires the curator's confirmation (dedup override).
+   */
+  postedDaysAgo: number | null;
   createdAt: string;
   expiresAt: string;
+}
+
+/** Options accepted by POST /approval/:id/approve alongside edits. */
+export interface ApproveOptions {
+  edits?: CuratorEdits;
+  /** "Enviar agora": jumps the send queue and pierces quiet hours. */
+  urgent?: boolean;
+  /** Confirms reposting a product published < 14 days ago. */
+  dedupOverride?: boolean;
 }
 
 // Mirror of CuratorEditsDto (src/curation/dto/approve-deal.dto.ts) — the

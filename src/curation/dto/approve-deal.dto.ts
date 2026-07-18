@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -45,4 +46,17 @@ export class ApproveDealDto {
   @ValidateNested()
   @Type(() => CuratorEditsDto)
   edits?: CuratorEditsDto;
+
+  /** "Enviar agora": jumps the send queue and pierces quiet hours (#7). */
+  @IsOptional()
+  @IsBoolean()
+  urgent?: boolean;
+
+  /**
+   * Confirms reposting a product published < DEDUP_WINDOW_DAYS ago. Without
+   * it, approving such a deal returns 409 { code: 'recently_posted' }.
+   */
+  @IsOptional()
+  @IsBoolean()
+  dedupOverride?: boolean;
 }

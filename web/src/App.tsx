@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   approveDeal,
+  confirmRepost,
   fetchPending,
   GoneError,
+  RecentlyPostedError,
   rejectDeal,
   setApiKey,
   UnauthorizedError,
 } from './api';
 import { DealCard } from './components/DealCard';
-import type { CuratorEdits, PendingDeal } from './types';
+import type { ApproveOptions, PendingDeal } from './types';
 
 const POLL_MS = 20_000;
 
@@ -52,12 +54,40 @@ export default function App() {
   }, [refresh]);
 
   const decide = useCallback(
-    async (id: string, kind: 'approve' | 'reject', edits?: CuratorEdits) => {
+    async (id: string, kind: 'approve' | 'reject', opts?: ApproveOptions) => {
       const snapshot = deals;
       setDeals((current) => current.filter((d) => d.id !== id));
       try {
-        await (kind === 'approve' ? approveDeal(id, edits) : rejectDeal(id));
-        showToast(kind === 'approve' ? 'Aprovado ✓' : 'Rejeitado ✕');
+        let enqueued: number | null = null;
+        try {
+          if (kind === 'approve') {
+            enqueued = (await approveDeal(id, opts)).enqueued;
+          } else {
+            await rejectDeal(id);
+          }
+        } catch (err) {
+          // Posted < 14 days ago (state changed since the card rendered):
+          // the send only proceeds with the curator's explicit confirmation.
+          if (err instanceof RecentlyPostedError && kind === 'approve') {
+            if (!confirmRepost(err.days)) {
+              setDeals(snapshot);
+              return;
+            }
+            enqueued = (await approveDeal(id, { ...opts, dedupOverride: true }))
+              .enqueued;
+          } else {
+            throw err;
+          }
+        }
+        showToast(
+          kind === 'reject'
+            ? 'Rejeitado ✕'
+            : enqueued === 0
+              ? 'Aprovado, mas nada enfileirado ⚠️'
+              : opts?.urgent
+                ? 'Enviando agora ⚡'
+                : 'Aprovado ✓',
+        );
       } catch (err) {
         if (err instanceof GoneError) {
           // Decided or expired elsewhere — it no longer belongs in the queue.
@@ -116,7 +146,7 @@ export default function App() {
             key={deal.id}
             deal={deal}
             now={now}
-            onApprove={(id, edits) => decide(id, 'approve', edits)}
+            onApprove={(id, opts) => decide(id, 'approve', opts)}
             onReject={(id) => decide(id, 'reject')}
           />
         ))}

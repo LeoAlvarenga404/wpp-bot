@@ -161,7 +161,10 @@ function makeDeps(opts?: {
   const coupons = {
     resolveForDeal: jest.fn(async () => opts?.couponView ?? null),
   } as unknown as CouponService;
-  return { repo, pipeline, opsConfig, config, decisions, coupons };
+  const dedup = {
+    lastPostedAt: jest.fn(async () => null as Date | null),
+  };
+  return { repo, pipeline, opsConfig, config, decisions, coupons, dedup };
 }
 
 class TestApprovalQueue extends ApprovalQueueService {
@@ -179,6 +182,7 @@ function makeService(d: ReturnType<typeof makeDeps>) {
     d.config,
     d.decisions as any,
     d.coupons,
+    d.dedup as any,
   );
 }
 
@@ -409,6 +413,94 @@ describe('ApprovalQueueService.approve with edits', () => {
   });
 });
 
+describe('ApprovalQueueService.approve urgent + dedup override (issue #7)', () => {
+  it('urgent approve enqueues with the urgent flag and audits approval_urgent', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    const result = await svc.approve(d.repo.rows[0].id, undefined, {
+      urgent: true,
+    });
+
+    expect(result.enqueued).toBe(1);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [expect.anything()],
+      undefined,
+      expect.objectContaining({ urgent: true }),
+    );
+    const stages = d.decisions.upserts.map((u) => u.stage);
+    expect(stages).toContain('approval');
+    expect(stages).toContain('approval_urgent');
+    expect(
+      d.decisions.upserts.find((u) => u.stage === 'approval_urgent'),
+    ).toMatchObject({ outcome: 'approved', score: 80 });
+  });
+
+  it('recently posted without override: 409, nothing enqueued, still PENDING', async () => {
+    const d = makeDeps({ threshold: '90' });
+    d.dedup.lastPostedAt.mockResolvedValue(new Date('2026-07-15T11:00:00Z'));
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    await expect(svc.approve(d.repo.rows[0].id)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(d.pipeline.enqueueScored).not.toHaveBeenCalled();
+    expect(d.repo.rows[0].status).toBe('PENDING');
+    expect(d.decisions.upserts).toHaveLength(0);
+  });
+
+  it('recently posted with dedupOverride: enqueues fresh and audits dedup_override', async () => {
+    const d = makeDeps({ threshold: '90' });
+    d.dedup.lastPostedAt.mockResolvedValue(new Date('2026-07-15T11:00:00Z'));
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    const result = await svc.approve(d.repo.rows[0].id, undefined, {
+      dedupOverride: true,
+    });
+
+    expect(result.enqueued).toBe(1);
+    // Fresh jobId so the BullMQ completed-job coalesce can't swallow a
+    // human-decided repost.
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [expect.anything()],
+      undefined,
+      expect.objectContaining({ uniqueJobId: true }),
+    );
+    expect(
+      d.decisions.upserts.find((u) => u.stage === 'dedup_override'),
+    ).toMatchObject({ outcome: 'approved', score: 80, catalogId: 'ml:MLB2' });
+  });
+
+  it('dedupOverride when NOT recently posted does not audit an override', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 80)]);
+
+    await svc.approve(d.repo.rows[0].id, undefined, { dedupOverride: true });
+
+    expect(
+      d.decisions.upserts.find((u) => u.stage === 'dedup_override'),
+    ).toBeUndefined();
+  });
+
+  it('plain approve stays exactly as before (no opts, no extra audit rows)', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    const sd = makeScored('MLB2', 80);
+    await svc.dispatchScored([sd]);
+
+    await svc.approve(d.repo.rows[0].id);
+
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
+      JSON.parse(JSON.stringify(sd)),
+    ]);
+    expect(d.decisions.upserts.map((u) => u.stage)).toEqual(['approval']);
+  });
+});
+
 describe('ApprovalQueueService.preview', () => {
   it('renders the caption with the edits applied, without deciding the row', async () => {
     const d = makeDeps({ threshold: '90' });
@@ -571,6 +663,30 @@ describe('ApprovalQueueService.listPending', () => {
     expect(pending.caption).toContain('✅ Por R$ 100 à vista  (-50%)');
     expect(pending.caption).toContain('🛒 Link: https://ml/MLB2');
     expect(pending.imageUrl).toBe('https://img/MLB2.jpg');
+  });
+
+  it('flags deals posted within the dedup window with postedDaysAgo', async () => {
+    const d = makeDeps({ threshold: '90' });
+    // Posted 3 days before the fixed test clock (2026-07-18T12:00Z).
+    d.dedup.lastPostedAt.mockResolvedValue(new Date('2026-07-15T11:00:00Z'));
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 85)]);
+
+    const [pending] = await svc.listPending();
+
+    expect(d.dedup.lastPostedAt).toHaveBeenCalledWith('ml:MLB2');
+    expect(pending.postedDaysAgo).toBe(3);
+  });
+
+  it('postedDaysAgo is null when never posted or posted outside the window', async () => {
+    const d = makeDeps({ threshold: '90' });
+    d.dedup.lastPostedAt.mockResolvedValue(new Date('2026-07-01T12:00:00Z')); // 17d
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 85)]);
+
+    const [pending] = await svc.listPending();
+
+    expect(pending.postedDaysAgo).toBeNull();
   });
 
   it('includes the coupon line when a coupon resolves for the snapshot deal', async () => {

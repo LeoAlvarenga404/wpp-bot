@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { PrismaClient } from '@prisma/client';
-import { Job, Worker } from 'bullmq';
+import { DelayedError, Job, Worker } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
 import { CouponService } from '../coupon/coupon.service';
 import type { CouponView } from '../coupon/coupon.types';
@@ -28,6 +28,8 @@ import {
   SendDigestJob,
   SendJob,
 } from '../queue/queue.types';
+import { OpsConfigService } from '../ops-config/ops-config.service';
+import { msUntilQuietEnd } from '../scheduler/quiet-hours';
 import { keyToString } from '../sources/source.port';
 import { couponViewFromCuratorEdit } from '../shared/curator-edits';
 
@@ -79,6 +81,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(PRICE_SCRAPER_PORT)
     private readonly priceScraper: PriceScraperPort,
     private readonly coupons: CouponService,
+    private readonly opsConfig: OpsConfigService,
   ) {}
 
   /**
@@ -94,7 +97,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     this.worker = new Worker<SendJob>(
       SEND_DEAL_QUEUE,
-      async (job) => this.process(job),
+      async (job, token) => this.process(job, token),
       {
         connection: this.connection,
         concurrency: 1,
@@ -128,11 +131,37 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     await this.worker?.close();
   }
 
-  private async process(job: Job<SendJob>): Promise<void> {
+  private async process(job: Job<SendJob>, token?: string): Promise<void> {
+    // Quiet-hours hold at send time (issue #7): a non-urgent job that reaches
+    // the worker inside the quiet window is parked until the window ends —
+    // retries and backlogs can no longer leak into the night. Urgent jobs
+    // ("enviar agora", a human decision) pierce the hold.
+    const urgent =
+      job.name !== 'send-digest' && (job.data as SendDealJob).urgent === true;
+    if (!urgent) await this.holdDuringQuietHours(job, token);
+
     if (job.name === 'send-digest') {
       return this.processDigest(job as Job<SendDigestJob>);
     }
     return this.processSingle(job as Job<SendDealJob>);
+  }
+
+  /** Parks the job until the quiet window ends (throws DelayedError). */
+  private async holdDuringQuietHours(
+    job: Job<SendJob>,
+    token?: string,
+  ): Promise<void> {
+    if (!(await this.opsConfig.quietHoursEnabled())) return;
+    const start = this.envInt('QUIET_START', 23);
+    const end = this.envInt('QUIET_END', 7);
+    const tz = this.config.get<string>('TZ') ?? 'America/Sao_Paulo';
+    const delayMs = msUntilQuietEnd(new Date(this.now()), start, end, tz);
+    if (delayMs <= 0) return;
+    this.logger.log(
+      `job ${job.id} held for quiet hours — resuming in ${Math.round(delayMs / 60_000)}min`,
+    );
+    await job.moveToDelayed(this.now() + delayMs, token);
+    throw new DelayedError();
   }
 
   private async processDigest(job: Job<SendDigestJob>): Promise<void> {
@@ -263,7 +292,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       priceView,
       couponView,
     );
-    if (channel === 'wa') await this.waJitter();
+    if (channel === 'wa') await this.waJitter(job.data.urgent === true);
     await publisher.publish({ caption, imageUrl }, targetJid);
     if (channel === 'wa') this.lastWaPublishAt = this.now();
 
@@ -361,11 +390,22 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
    * Human-like pause between consecutive WA publishes. Picks a random target
    * gap in [WA_JITTER_MIN_MS, WA_JITTER_MAX_MS] and sleeps only the part not
    * already covered by naturally elapsed time — an idle queue never waits.
+   *
+   * Urgent jobs skip the pacing window but NEVER the jitter itself: a short
+   * random gap ([URGENT_WA_JITTER_MIN_MS, URGENT_WA_JITTER_MAX_MS], default
+   * 2–8s) always protects the number (issue #7).
    */
-  private async waJitter(): Promise<void> {
+  private async waJitter(urgent = false): Promise<void> {
     if (this.lastWaPublishAt == null) return;
-    const min = this.envInt('WA_JITTER_MIN_MS', 30_000);
-    const max = Math.max(min, this.envInt('WA_JITTER_MAX_MS', 120_000));
+    const min = urgent
+      ? this.envInt('URGENT_WA_JITTER_MIN_MS', 2_000)
+      : this.envInt('WA_JITTER_MIN_MS', 30_000);
+    const max = Math.max(
+      min,
+      urgent
+        ? this.envInt('URGENT_WA_JITTER_MAX_MS', 8_000)
+        : this.envInt('WA_JITTER_MAX_MS', 120_000),
+    );
     const target = min + this.random() * (max - min);
     const wait = Math.round(target - (this.now() - this.lastWaPublishAt));
     if (wait > 0) await this.sleep(wait);

@@ -10,6 +10,7 @@ import { Cron } from '@nestjs/schedule';
 import { CouponService } from '../coupon/coupon.service';
 import type { CouponView } from '../coupon/coupon.types';
 import type { ScoredDeal, ScoreReason } from '../deal-score/types';
+import { DedupService } from '../dedup/dedup.service';
 import { OpsConfigService } from '../ops-config/ops-config.service';
 import {
   PipelineService,
@@ -41,6 +42,20 @@ export interface DispatchResult extends EnqueueResult {
   threshold: number;
 }
 
+export interface ApproveOptions {
+  /**
+   * "Enviar agora": the job jumps the send queue (LIFO) and skips the
+   * quiet-hours hold at send time. The WA anti-ban jitter always remains.
+   */
+  urgent?: boolean;
+  /**
+   * Curator consciously reposts a product published < DEDUP_WINDOW_DAYS ago.
+   * Without it, approving a recently-posted deal is refused (409) so the
+   * panel can ask for confirmation. The override is audited.
+   */
+  dedupOverride?: boolean;
+}
+
 export interface PendingSummary {
   id: string;
   catalogId: string;
@@ -63,6 +78,13 @@ export interface PendingSummary {
   caption: string;
   /** Hi-res image the publisher would attach. */
   imageUrl: string;
+  /**
+   * Days since this product was last published, when inside the dedup window
+   * (DEDUP_WINDOW_DAYS); null otherwise. Non-null renders the "postado há N
+   * dias" warning on the card — approving then requires the curator's
+   * explicit dedup override (issue #7).
+   */
+  postedDaysAgo: number | null;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -90,6 +112,7 @@ export class ApprovalQueueService {
   private readonly logger = new Logger(ApprovalQueueService.name);
   private readonly tz: string;
   private readonly ttlHours: number;
+  private readonly dedupWindowDays: number;
 
   constructor(
     @Inject(APPROVAL_QUEUE_REPO)
@@ -100,9 +123,13 @@ export class ApprovalQueueService {
     @Inject(CURATION_DECISION_REPO)
     private readonly decisions: CurationDecisionRepo,
     private readonly coupons: CouponService,
+    private readonly dedup: DedupService,
   ) {
     this.tz = this.config.get<string>('TZ') ?? 'America/Sao_Paulo';
     this.ttlHours = Number(this.config.get<string>('APPROVAL_TTL_HOURS', '4'));
+    this.dedupWindowDays = Number(
+      this.config.get<string>('DEDUP_WINDOW_DAYS', '14'),
+    );
   }
 
   /**
@@ -149,10 +176,17 @@ export class ApprovalQueueService {
    * Optional light edits (headline / final price / coupon — issue #6) are
    * applied to the snapshot before it re-enters the pipeline and travel on
    * `ScoredDeal.curatorEdits` so the send path honors them end to end.
+   *
+   * Urgent + dedup override (issue #7): a deal posted < DEDUP_WINDOW_DAYS ago
+   * is refused with 409/recently_posted unless `dedupOverride` confirms the
+   * human decision. Urgent and overridden sends enqueue with a fresh jobId so
+   * the BullMQ completed-job coalesce can never silently swallow them; both
+   * are audited as extra CurationDecision stages.
    */
   async approve(
     id: string,
     edits?: CuratorEdits,
+    opts?: ApproveOptions,
   ): Promise<{
     id: string;
     catalogId: string;
@@ -160,12 +194,34 @@ export class ApprovalQueueService {
     targets: number;
   }> {
     const row = await this.mustBePending(id);
+    const postedDaysAgo = await this.postedDaysAgo(row.catalogId);
+    if (postedDaysAgo != null && !opts?.dedupOverride) {
+      throw new ConflictException({
+        code: 'recently_posted',
+        days: postedDaysAgo,
+        message: `'${row.catalogId}' foi postado há ${postedDaysAgo} dia(s) — aprovar exige dedupOverride`,
+      });
+    }
     const sd = row.snapshot as ScoredDeal;
     const applied = hasCuratorEdits(edits) ? edits : undefined;
     if (applied) this.applyEdits(sd, applied);
-    const result = await this.pipeline.enqueueScored([sd]);
+
+    const urgent = opts?.urgent === true;
+    const overridden = postedDaysAgo != null && opts?.dedupOverride === true;
+    const result =
+      urgent || overridden
+        ? await this.pipeline.enqueueScored([sd], undefined, {
+            urgent,
+            uniqueJobId: true,
+          })
+        : await this.pipeline.enqueueScored([sd]);
+
     await this.repo.markDecided(row.id, 'APPROVED', this.now(), applied);
     await this.audit(row, 'approved', applied);
+    if (urgent) await this.audit(row, 'approved', undefined, 'approval_urgent');
+    if (overridden) {
+      await this.audit(row, 'approved', undefined, 'dedup_override');
+    }
     return {
       id: row.id,
       catalogId: row.catalogId,
@@ -314,9 +370,30 @@ export class ApprovalQueueService {
       },
       caption,
       imageUrl,
+      postedDaysAgo: await this.postedDaysAgo(row.catalogId),
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
     };
+  }
+
+  /**
+   * Days since the last publish when inside the dedup window; null otherwise.
+   * Best-effort — a dedup lookup failure must never hide a card.
+   */
+  private async postedDaysAgo(catalogId: string): Promise<number | null> {
+    try {
+      const at = await this.dedup.lastPostedAt(catalogId);
+      if (!at) return null;
+      const days = Math.floor(
+        (this.now().getTime() - at.getTime()) / 86_400_000,
+      );
+      return days >= 0 && days < this.dedupWindowDays ? days : null;
+    } catch (err) {
+      this.logger.warn(
+        `dedup lookup failed (${catalogId}): ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /** Coupon line is best-effort — a coupon lookup failure never hides a card. */
@@ -342,12 +419,13 @@ export class ApprovalQueueService {
     row: PendingDealRow,
     outcome: 'approved' | 'rejected' | 'expired',
     edits?: CuratorEdits,
+    stage = 'approval',
   ): Promise<void> {
     const sd = row.snapshot as ScoredDeal;
     try {
       await this.decisions.upsert({
         catalogId: row.catalogId,
-        stage: 'approval',
+        stage,
         outcome,
         day: dayString(this.now(), this.tz),
         score: row.score,
@@ -357,7 +435,7 @@ export class ApprovalQueueService {
       });
     } catch (err) {
       this.logger.warn(
-        `decision upsert failed (approval/${row.catalogId}): ${(err as Error).message}`,
+        `decision upsert failed (${stage}/${row.catalogId}): ${(err as Error).message}`,
       );
     }
   }
