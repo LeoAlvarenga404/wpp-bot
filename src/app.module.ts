@@ -8,6 +8,7 @@ import { DbModule } from './db/db.module';
 import { DedupModule } from './dedup/dedup.module';
 import { MercadoLivreModule } from './mercado-livre/ml.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { OpsConfigModule } from './ops-config/ops-config.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { QueueModule } from './queue/queue.module';
 import { RedirectModule } from './redirect/redirect.module';
@@ -29,6 +30,7 @@ import { WorkerModule } from './worker/worker.module';
     AffiliateModule,
     DedupModule,
     CouponModule,
+    OpsConfigModule,
     RedirectModule,
     PipelineModule,
     WorkerModule,

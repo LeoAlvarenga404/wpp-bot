@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
+import { OpsConfigService } from '../ops-config/ops-config.service';
 import { PipelineService } from '../pipeline/pipeline.service';
 import type { SourceId } from '../sources/source.port';
 import { SourceRegistry } from '../sources/source-registry.service';
@@ -21,6 +22,7 @@ export class SchedulerService {
     private readonly pipeline: PipelineService,
     private readonly registry: SourceRegistry,
     private readonly config: ConfigService,
+    private readonly opsConfig: OpsConfigService,
   ) {}
 
   @Cron(process.env.SCHEDULER_CRON ?? '0 10,13,17,20 * * *')
@@ -63,19 +65,11 @@ export class SchedulerService {
       }
     }
 
-    // Master switch for the whole quiet-hours window. Default 'true' preserves
-    // the QUIET_START/QUIET_END behavior; set QUIET_HOURS_ENABLED=false to let
-    // the scheduler fire around the clock (dev/testing) without losing the
-    // configured window — flip back to 'true' for production.
-    //
-    // NOTE: config.get only, no `?? process.env` fallback — same reason as
-    // dispatchEnabled(): requiring @prisma/client side-loads the repo's .env
-    // into process.env, so a process.env read makes this env-dependent under
-    // Jest. ConfigService already reads .env in production.
-    const quietEnabled =
-      (
-        this.config.get<string>('QUIET_HOURS_ENABLED') ?? 'true'
-      ).toLowerCase() !== 'false';
+    // Master switch for the whole quiet-hours window: OpsConfigService reads
+    // the panel-editable db row first, falling back to QUIET_HOURS_ENABLED in
+    // env, then to true — so flipping it in the panel takes effect on the
+    // very next tick without a container recreate.
+    const quietEnabled = await this.opsConfig.quietHoursEnabled();
     const tz =
       this.config.get<string>('TZ') ?? process.env.TZ ?? 'America/Sao_Paulo';
     const quietStart = Number(

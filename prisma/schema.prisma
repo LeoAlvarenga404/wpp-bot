@@ -130,6 +130,17 @@ model ShortLink {
   createdAt DateTime @default(now())
 }
 
+// Operational config editable from the curation panel with immediate effect
+// (no container recreate). Values are strings; typing/validation and the
+// db → env → default fallback live in OpsConfigService. Keys share the env
+// var names (e.g. QUIET_HOURS_ENABLED) so the fallback chain stays obvious.
+// New key = no migration.
+model OpsConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 // Singleton row (id = 1) holding current ML OAuth tokens.
 model MlToken {
   id           Int      @id @default(1)

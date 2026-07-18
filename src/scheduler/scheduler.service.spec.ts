@@ -14,6 +14,8 @@ import type { PipelineService } from '../pipeline/pipeline.service';
 import type { SourceRegistry } from '../sources/source-registry.service';
 import type { DealSourcePort } from '../sources/source.port';
 import type { ScoredDeal } from '../deal-score/types';
+import { OpsConfigService } from '../ops-config/ops-config.service';
+import type { OpsConfigRepo } from '../ops-config/ops-config.repo';
 
 function makeFakeSource(id: 'ml'): DealSourcePort {
   return {
@@ -58,6 +60,26 @@ function makeConfig(env: Record<string, string>): ConfigService {
 }
 
 /**
+ * Real OpsConfigService over an in-memory repo: `dbRows` plays the OpsConfig
+ * table, `env` keeps the db → env → default fallback observable in specs.
+ */
+function makeOpsConfig(
+  env: Record<string, string>,
+  dbRows: Record<string, string> = {},
+): OpsConfigService {
+  const store = new Map(Object.entries(dbRows));
+  const repo = {
+    get: async (key: string) => store.get(key) ?? null,
+    set: async (key: string, value: string) => {
+      store.set(key, value);
+    },
+    getAll: async () =>
+      [...store.entries()].map(([key, value]) => ({ key, value })),
+  } as unknown as OpsConfigRepo;
+  return new OpsConfigService(repo, makeConfig(env));
+}
+
+/**
  * Test double exposing the jitter seams: `random()` is fixed and `delay()`
  * records requested waits, resolving via `resolveDelay` (immediately by
  * default) so specs never actually wait.
@@ -94,7 +116,12 @@ describe('SchedulerService.tickBatch', () => {
     };
     const pipeline = makePipeline();
     const registry = makeRegistry([makeFakeSource('ml')]);
-    const svc = new SchedulerService(pipeline, registry, makeConfig(env));
+    const svc = new SchedulerService(
+      pipeline,
+      registry,
+      makeConfig(env),
+      makeOpsConfig(env),
+    );
 
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T12:00:00Z'));
 
@@ -119,6 +146,7 @@ describe('SchedulerService.tickBatch', () => {
       pipeline,
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
+      makeOpsConfig(env),
     );
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
 
@@ -143,6 +171,7 @@ describe('SchedulerService.tickBatch', () => {
       pipeline,
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
+      makeOpsConfig(env),
     );
     // Midnight UTC = inside the 23->7 window; would normally skip.
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
@@ -151,6 +180,32 @@ describe('SchedulerService.tickBatch', () => {
 
     expect(pipeline.collectAllScored).toHaveBeenCalled();
     expect(pipeline.enqueueScored).toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('db row QUIET_HOURS_ENABLED=false overrides env true with immediate effect', async () => {
+    const env = {
+      SCHEDULER_ENABLED: 'true',
+      SCHEDULER_MODE: 'batch',
+      QUIET_START: '23',
+      QUIET_END: '7',
+      QUIET_HOURS_ENABLED: 'true',
+      TZ: 'UTC',
+      TICK_JITTER_MAX_MIN: '0',
+    };
+    const pipeline = makePipeline();
+    const svc = new SchedulerService(
+      pipeline,
+      makeRegistry([makeFakeSource('ml')]),
+      makeConfig(env),
+      makeOpsConfig(env, { QUIET_HOURS_ENABLED: 'false' }),
+    );
+    // Midnight UTC = inside the 23->7 window; env alone would skip.
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
+
+    await svc.tick();
+
+    expect(pipeline.collectAllScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
 });
@@ -165,7 +220,12 @@ describe('SchedulerService.tickLegacy', () => {
     };
     const pipeline = makePipeline();
     const registry = makeRegistry([makeFakeSource('ml')]);
-    const svc = new SchedulerService(pipeline, registry, makeConfig(env));
+    const svc = new SchedulerService(
+      pipeline,
+      registry,
+      makeConfig(env),
+      makeOpsConfig(env),
+    );
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T12:00:00Z'));
 
     await svc.tick();
@@ -191,6 +251,7 @@ describe('SchedulerService tick jitter', () => {
       pipeline,
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
+      makeOpsConfig(env),
     );
     return { svc, pipeline };
   }
