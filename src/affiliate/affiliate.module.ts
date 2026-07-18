@@ -6,6 +6,11 @@ import {
   PriceScraperPort,
   NoopPriceScraper,
 } from '../pricing/price-scraper.port';
+import {
+  PRODUCT_SCRAPER_PORT,
+  ProductScraperPort,
+  NoopProductScraper,
+} from '../pricing/product-scraper.port';
 import { AFFILIATE_LINK_PORT, AffiliateLinkPort } from './affiliate-link.port';
 import { AffiliateController } from './affiliate.controller';
 import { JsonCacheAffiliateAdapter } from './json-cache-adapter';
@@ -98,7 +103,24 @@ class FallbackAffiliateAdapter implements AffiliateLinkPort {
         return provider === 'playwright' ? playwright : new NoopPriceScraper();
       },
     },
+    {
+      provide: PRODUCT_SCRAPER_PORT,
+      inject: [ConfigService, PlaywrightAffiliateAdapter],
+      useFactory: (
+        config: ConfigService,
+        playwright: PlaywrightAffiliateAdapter,
+      ): ProductScraperPort => {
+        const provider = (
+          config.get<string>('AFFILIATE_PROVIDER', 'json') ?? 'json'
+        )
+          .toLowerCase()
+          .trim();
+        return provider === 'playwright'
+          ? playwright
+          : new NoopProductScraper();
+      },
+    },
   ],
-  exports: [AFFILIATE_LINK_PORT, PRICE_SCRAPER_PORT],
+  exports: [AFFILIATE_LINK_PORT, PRICE_SCRAPER_PORT, PRODUCT_SCRAPER_PORT],
 })
 export class AffiliateModule {}

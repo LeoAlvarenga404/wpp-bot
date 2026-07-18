@@ -30,6 +30,12 @@ import {
   PrismaCurationDecisionRepo,
 } from '../src/curation/curation-decision.repo';
 import { PipelineService } from '../src/pipeline/pipeline.service';
+import { ManualDealService } from '../src/curation/manual/manual-deal.service';
+import {
+  MANUAL_RESOLVERS,
+  ManualResolveError,
+  type ManualDealResolver,
+} from '../src/curation/manual/manual-resolver.port';
 import type { ScoredDeal } from '../src/deal-score/types';
 
 const CATALOG_PREFIX = 'e2e-approval';
@@ -89,6 +95,32 @@ describe('Approval queue (e2e)', () => {
     topScore: 80,
   }));
 
+  // Stands in for MlManualResolver so the e2e never drives a real browser.
+  // Claims mercadolivre URLs; a URL containing "fail" simulates a scrape miss.
+  const fakeResolver: ManualDealResolver = {
+    source: 'ml',
+    canResolve: (u) => /mercadolivre/i.test(u),
+    resolve: async (url) => {
+      if (/fail/i.test(url)) {
+        throw new ManualResolveError(
+          'scrape_failed',
+          'não consegui ler a página',
+        );
+      }
+      return {
+        key: { source: 'ml', externalId: `${CATALOG_PREFIX}-manual` },
+        source: 'ml',
+        title: 'Fone Manual XYZ',
+        priceCents: 12990,
+        originalPriceCents: 25990,
+        discountPercent: 50,
+        thumbnail: 'https://img/manual.jpg',
+        permalink: url,
+        installmentsNoInterest: true,
+      };
+    },
+  };
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
@@ -108,6 +140,11 @@ describe('Approval queue (e2e)', () => {
         },
         { provide: PipelineService, useValue: { enqueueScored } },
         ApprovalQueueService,
+        {
+          provide: MANUAL_RESOLVERS,
+          useValue: [fakeResolver],
+        },
+        ManualDealService,
       ],
     }).compile();
 
@@ -426,6 +463,95 @@ describe('Approval queue (e2e)', () => {
       where: { catalogId: `ml:${CATALOG_PREFIX}-old`, stage: 'approval' },
     });
     expect(decision).toMatchObject({ outcome: 'expired', score: 70 });
+  });
+
+  it('POST /approval/manual/resolve fills a pending card from a pasted URL', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual/resolve')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ url: 'https://www.mercadolivre.com.br/fone/p/MLB123' })
+      .expect(201);
+
+    expect(res.body).toMatchObject({
+      catalogId: `ml:${CATALOG_PREFIX}-manual`,
+      score: 100,
+      preview: {
+        title: 'Fone Manual XYZ',
+        priceCents: 12990,
+        originalPriceCents: 25990,
+        discountPercent: 50,
+      },
+      postedDaysAgo: null,
+    });
+    expect(res.body.id).toBeDefined();
+    expect(res.body.caption).toContain('FONE MANUAL XYZ');
+
+    // It really landed in the queue and rides the same flow.
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, status: 'PENDING' },
+    });
+    expect(row).toBeTruthy();
+    expect(row.snapshot.deal.raw.feedId).toBe('manual');
+  });
+
+  it('approving a manual deal audits under approval_manual (not approval), keeping calibration clean', async () => {
+    await request(app.getHttpServer())
+      .post('/approval/manual/resolve')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ url: 'https://www.mercadolivre.com.br/fone/p/MLB123' })
+      .expect(201);
+    const row = await (prisma as any).pendingDeal.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, status: 'PENDING' },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/approval/${row.id}/approve`)
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .expect(201);
+
+    const manualDecision = await (prisma as any).curationDecision.findFirst({
+      where: {
+        catalogId: `ml:${CATALOG_PREFIX}-manual`,
+        stage: 'approval_manual',
+      },
+    });
+    expect(manualDecision).toMatchObject({ outcome: 'approved' });
+    // The score-based calibration stage must not carry the manual sentinel.
+    const plain = await (prisma as any).curationDecision.findFirst({
+      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, stage: 'approval' },
+    });
+    expect(plain).toBeNull();
+  });
+
+  it('POST /approval/manual/resolve returns 422 on scrape failure and creates no card', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual/resolve')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ url: 'https://www.mercadolivre.com.br/fail/p/MLB999' })
+      .expect(422);
+    expect(res.body.code).toBe('scrape_failed');
+
+    const count = await (prisma as any).pendingDeal.count({
+      where: { catalogId: { contains: `${CATALOG_PREFIX}-fail` } },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('POST /approval/manual/resolve rejects an unsupported store URL (400)', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual/resolve')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ url: 'https://loja-desconhecida.com/produto/1' })
+      .expect(400);
+    expect(res.body.code).toBe('unsupported_url');
+  });
+
+  it('POST /approval/manual/resolve rejects a malformed body (400)', async () => {
+    await request(app.getHttpServer())
+      .post('/approval/manual/resolve')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({ url: 'not a url' })
+      .expect(400);
   });
 
   it('unknown id returns 404', async () => {
