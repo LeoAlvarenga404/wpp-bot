@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/approval': process.env.VITE_API_PROXY ?? 'http://localhost:3000',
+      '/approval': process.env.VITE_API_PROXY ?? 'http://localhost:3333',
     },
   },
 });
