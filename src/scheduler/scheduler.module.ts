@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ApprovalModule } from '../curation/approval.module';
 import { MercadoLivreModule } from '../mercado-livre/ml.module';
 import { OpsConfigModule } from '../ops-config/ops-config.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
@@ -10,6 +11,7 @@ import { TokenRefresherService } from './token-refresher.service';
   imports: [
     ScheduleModule.forRoot(),
     PipelineModule,
+    ApprovalModule,
     MercadoLivreModule,
     OpsConfigModule,
   ],

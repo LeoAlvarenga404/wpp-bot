@@ -6,7 +6,7 @@ export const CURATION_DECISION_REPO = Symbol('CURATION_DECISION_REPO');
 export interface DecisionUpsert {
   catalogId: string;
   stage: string;
-  outcome: 'rejected' | 'approved' | 'posted';
+  outcome: 'rejected' | 'approved' | 'posted' | 'expired';
   day: string;
   score?: number;
   priceCents?: number;

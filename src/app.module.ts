@@ -4,6 +4,7 @@ import { AffiliateModule } from './affiliate/affiliate.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CouponModule } from './coupon/coupon.module';
+import { ApprovalModule } from './curation/approval.module';
 import { DbModule } from './db/db.module';
 import { DedupModule } from './dedup/dedup.module';
 import { MercadoLivreModule } from './mercado-livre/ml.module';
@@ -33,6 +34,7 @@ import { WorkerModule } from './worker/worker.module';
     OpsConfigModule,
     RedirectModule,
     PipelineModule,
+    ApprovalModule,
     WorkerModule,
     SchedulerModule,
     MetricsModule,

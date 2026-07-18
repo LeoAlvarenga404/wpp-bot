@@ -141,6 +141,28 @@ model OpsConfig {
   updatedAt DateTime @updatedAt
 }
 
+// Approval queue (curation panel): borderline deals — passed the gate but
+// scored below AUTO_APPROVE_SCORE — wait here for a human verdict instead of
+// going straight to the send queue. `snapshot` is the full ScoredDeal JSON,
+// re-hydrated on approve so the deal re-enters the existing dispatch path
+// (live price scrape, coupon, digest, dedup). status is a string, not an
+// enum (same rationale as WaTarget.channel): PENDING | APPROVED | REJECTED |
+// EXPIRED. Rows past `expiresAt` are discarded without sending — a stale
+// price must never be published.
+model PendingDeal {
+  id        String    @id @default(cuid())
+  catalogId String
+  status    String    @default("PENDING")
+  score     Int
+  snapshot  Json
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  @@index([status, expiresAt])
+  @@index([catalogId, status])
+}
+
 // Singleton row (id = 1) holding current ML OAuth tokens.
 model MlToken {
   id           Int      @id @default(1)

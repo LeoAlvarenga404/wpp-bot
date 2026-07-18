@@ -33,6 +33,12 @@ import { TargetsService } from '../whatsapp/targets.service';
 import { WhatsappService } from '../whatsapp/wa.service';
 import { FormatterService } from './formatter.service';
 
+export interface EnqueueResult {
+  enqueued: number;
+  targets: number;
+  topScore: number | null;
+}
+
 @Injectable()
 export class PipelineService {
   private readonly logger = new Logger(PipelineService.name);
@@ -246,11 +252,7 @@ export class PipelineService {
   async enqueueScored(
     scored: ScoredDeal[],
     overrideMax?: number,
-  ): Promise<{
-    enqueued: number;
-    targets: number;
-    topScore: number | null;
-  }> {
+  ): Promise<EnqueueResult> {
     const num = (k: string, def: number) =>
       Number(this.config.get<string>(k, String(def)));
     const waCap = overrideMax ?? num('MAX_DEALS_PER_RUN_WA', 4);

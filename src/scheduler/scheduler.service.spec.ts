@@ -16,6 +16,7 @@ import type { DealSourcePort } from '../sources/source.port';
 import type { ScoredDeal } from '../deal-score/types';
 import { OpsConfigService } from '../ops-config/ops-config.service';
 import type { OpsConfigRepo } from '../ops-config/ops-config.repo';
+import type { ApprovalQueueService } from '../curation/approval-queue.service';
 
 function makeFakeSource(id: 'ml'): DealSourcePort {
   return {
@@ -44,6 +45,19 @@ function makePipeline(): PipelineService {
       sourceId: 'ml',
     })),
   } as unknown as PipelineService;
+}
+
+/** Bifurcation seam the scheduler now dispatches through (issue #4). */
+function makeApproval(): ApprovalQueueService {
+  return {
+    dispatchScored: jest.fn(async () => ({
+      enqueued: 0,
+      targets: 0,
+      topScore: null,
+      pending: 0,
+      threshold: 999,
+    })),
+  } as unknown as ApprovalQueueService;
 }
 
 function makeRegistry(sources: DealSourcePort[]): SourceRegistry {
@@ -104,7 +118,7 @@ class TestScheduler extends SchedulerService {
 }
 
 describe('SchedulerService.tickBatch', () => {
-  it('calls pipeline.collectAllScored then enqueueScored', async () => {
+  it('calls pipeline.collectAllScored then approvalQueue.dispatchScored', async () => {
     const env = {
       SCHEDULER_ENABLED: 'true',
       SCHEDULER_MODE: 'batch',
@@ -115,12 +129,14 @@ describe('SchedulerService.tickBatch', () => {
       TICK_JITTER_MAX_MIN: '0',
     };
     const pipeline = makePipeline();
+    const approval = makeApproval();
     const registry = makeRegistry([makeFakeSource('ml')]);
     const svc = new SchedulerService(
       pipeline,
       registry,
       makeConfig(env),
       makeOpsConfig(env),
+      approval,
     );
 
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T12:00:00Z'));
@@ -128,7 +144,9 @@ describe('SchedulerService.tickBatch', () => {
     await svc.tick();
 
     expect(pipeline.collectAllScored).toHaveBeenCalled();
-    expect(pipeline.enqueueScored).toHaveBeenCalled();
+    expect(approval.dispatchScored).toHaveBeenCalled();
+    // The scheduler no longer enqueues directly — the approval queue decides.
+    expect(pipeline.enqueueScored).not.toHaveBeenCalled();
     jest.useRealTimers();
   });
 
@@ -147,6 +165,7 @@ describe('SchedulerService.tickBatch', () => {
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
       makeOpsConfig(env),
+      makeApproval(),
     );
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
 
@@ -167,11 +186,13 @@ describe('SchedulerService.tickBatch', () => {
       TICK_JITTER_MAX_MIN: '0',
     };
     const pipeline = makePipeline();
+    const approval = makeApproval();
     const svc = new SchedulerService(
       pipeline,
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
       makeOpsConfig(env),
+      approval,
     );
     // Midnight UTC = inside the 23->7 window; would normally skip.
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
@@ -179,7 +200,7 @@ describe('SchedulerService.tickBatch', () => {
     await svc.tick();
 
     expect(pipeline.collectAllScored).toHaveBeenCalled();
-    expect(pipeline.enqueueScored).toHaveBeenCalled();
+    expect(approval.dispatchScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
 
@@ -199,6 +220,7 @@ describe('SchedulerService.tickBatch', () => {
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
       makeOpsConfig(env, { QUIET_HOURS_ENABLED: 'false' }),
+      makeApproval(),
     );
     // Midnight UTC = inside the 23->7 window; env alone would skip.
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T00:00:00Z'));
@@ -219,19 +241,21 @@ describe('SchedulerService.tickLegacy', () => {
       TICK_JITTER_MAX_MIN: '0',
     };
     const pipeline = makePipeline();
+    const approval = makeApproval();
     const registry = makeRegistry([makeFakeSource('ml')]);
     const svc = new SchedulerService(
       pipeline,
       registry,
       makeConfig(env),
       makeOpsConfig(env),
+      approval,
     );
     jest.useFakeTimers().setSystemTime(new Date('2026-05-14T12:00:00Z'));
 
     await svc.tick();
 
     expect(pipeline.collectScoredOne).toHaveBeenCalledWith('ml');
-    expect(pipeline.enqueueScored).toHaveBeenCalled();
+    expect(approval.dispatchScored).toHaveBeenCalled();
     jest.useRealTimers();
   });
 });
@@ -252,6 +276,7 @@ describe('SchedulerService tick jitter', () => {
       makeRegistry([makeFakeSource('ml')]),
       makeConfig(env),
       makeOpsConfig(env),
+      makeApproval(),
     );
     return { svc, pipeline };
   }

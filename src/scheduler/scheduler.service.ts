@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
+import { ApprovalQueueService } from '../curation/approval-queue.service';
 import { OpsConfigService } from '../ops-config/ops-config.service';
 import { PipelineService } from '../pipeline/pipeline.service';
 import type { SourceId } from '../sources/source.port';
@@ -23,6 +24,7 @@ export class SchedulerService {
     private readonly registry: SourceRegistry,
     private readonly config: ConfigService,
     private readonly opsConfig: OpsConfigService,
+    private readonly approvalQueue: ApprovalQueueService,
   ) {}
 
   @Cron(process.env.SCHEDULER_CRON ?? '0 10,13,17,20 * * *')
@@ -128,10 +130,14 @@ export class SchedulerService {
         );
         return;
       }
-      const result = await this.pipeline.enqueueScored(allScored);
+      // Threshold bifurcation: dispatchScored auto-enqueues deals scoring
+      // >= AUTO_APPROVE_SCORE and holds the borderline rest in the approval
+      // queue (4h expiry) for a human verdict.
+      const result = await this.approvalQueue.dispatchScored(allScored);
       this.logger.log(
         `Scheduler tick batch - totalScored=${allScored.length} ` +
-          `enqueued=${result.enqueued} targets=${result.targets} ` +
+          `enqueued=${result.enqueued} pending=${result.pending} ` +
+          `threshold=${result.threshold} targets=${result.targets} ` +
           `topScore=${result.topScore ?? 'n/a'} took=${ms}ms`,
       );
     } catch (err) {
@@ -163,10 +169,12 @@ export class SchedulerService {
         );
         return;
       }
-      const result = await this.pipeline.enqueueScored(scored);
+      // Same threshold bifurcation as tickBatch — see comment there.
+      const result = await this.approvalQueue.dispatchScored(scored);
       this.logger.log(
         `Scheduler tick legacy - source=${sourceId} scored=${scored.length} ` +
-          `enqueued=${result.enqueued} targets=${result.targets} took=${ms}ms`,
+          `enqueued=${result.enqueued} pending=${result.pending} ` +
+          `threshold=${result.threshold} targets=${result.targets} took=${ms}ms`,
       );
     } catch (err) {
       const ms = Date.now() - startedAt;

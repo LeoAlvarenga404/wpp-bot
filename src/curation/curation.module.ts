@@ -23,6 +23,8 @@ import { CurationService } from './curation.service';
     CurationService,
     CurationGateService,
   ],
-  exports: [CurationService, CurationGateService],
+  // CURATION_DECISION_REPO is exported for ApprovalModule (same audit table,
+  // new 'approval' stage).
+  exports: [CurationService, CurationGateService, CURATION_DECISION_REPO],
 })
 export class CurationModule {}
