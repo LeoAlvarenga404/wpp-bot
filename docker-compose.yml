@@ -28,6 +28,9 @@ services:
     # use service DNS instead — `environment` wins over `env_file`.
     environment:
       DATABASE_URL: postgresql://wppbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/wppbot?schema=public
+      # .env sets PORT=3333 for host `npm start` (vite proxies there). Inside the
+      # container the compose mapping expects 3000, so pin it — env wins over env_file.
+      PORT: 3000
     # Host port 3001 (container still 3000). Avoids clash with a host
     # `npm start` on 3000 during local dev.
     ports:
