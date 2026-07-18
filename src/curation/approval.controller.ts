@@ -3,6 +3,7 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 import { ApprovalQueueService } from './approval-queue.service';
 import { ApproveDealDto } from './dto/approve-deal.dto';
 import { ResolveManualDto } from './dto/resolve-manual.dto';
+import { CreateGenericManualDto } from './dto/create-generic-manual.dto';
 import { ManualDealService } from './manual/manual-deal.service';
 
 @Controller('approval')
@@ -25,6 +26,15 @@ export class ApprovalController {
   @Post('manual/resolve')
   async resolveManual(@Body() body: ResolveManualDto) {
     return this.manualDeals.resolveUrl(body.url);
+  }
+
+  /**
+   * Deal manual genérico (issue #9): submit a fully populated deal via form
+   * bypassing the scraper resolvers.
+   */
+  @Post('manual/generic')
+  async createGeneric(@Body() body: CreateGenericManualDto) {
+    return this.manualDeals.createGeneric(body);
   }
 
   @Post(':id/approve')

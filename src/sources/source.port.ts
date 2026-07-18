@@ -1,6 +1,6 @@
 // src/sources/source.port.ts
 
-export type SourceId = 'ml' | 'shopee';
+export type SourceId = 'ml' | 'shopee' | (string & {});
 
 export interface ProductKey {
   source: SourceId;
