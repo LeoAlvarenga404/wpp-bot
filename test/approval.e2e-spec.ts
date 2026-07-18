@@ -14,6 +14,7 @@ import { ConfigModule } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { CouponModule } from '../src/coupon/coupon.module';
 import { PrismaService } from '../src/db/prisma.service';
 import { DbModule } from '../src/db/db.module';
 import { OpsConfigModule } from '../src/ops-config/ops-config.module';
@@ -93,6 +94,7 @@ describe('Approval queue (e2e)', () => {
         ConfigModule.forRoot({ isGlobal: true }),
         DbModule,
         OpsConfigModule,
+        CouponModule,
       ],
       controllers: [ApprovalController],
       providers: [
@@ -161,6 +163,10 @@ describe('Approval queue (e2e)', () => {
     });
     expect(first.id).toBeDefined();
     expect(new Date(first.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    // Faithful WA preview: rendered by the same template the send path uses.
+    expect(first.caption).toContain('➡️ E2E PRODUTO HOLD-1');
+    expect(first.caption).toContain('✅ Por R$ 99 à vista  (-50%)');
+    expect(first.imageUrl).toBe('https://img/hold-1.jpg');
   });
 
   it('POST /approval/:id/approve re-hydrates the snapshot into enqueueScored and audits', async () => {

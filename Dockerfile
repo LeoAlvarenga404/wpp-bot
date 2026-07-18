@@ -22,6 +22,13 @@ COPY tsconfig*.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
 
+# Curation panel SPA (issue #5). Separate dependency layer so editing panel
+# source doesn't re-run its npm ci; Nest serves web/dist as static files.
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci
+COPY web ./web
+RUN cd web && npm run build
+
 # Strip dev deps from node_modules so the runtime stage can copy them as-is.
 # `prisma` (the CLI) is a devDependency in package.json but the runtime
 # entrypoint needs it to run `prisma migrate deploy` on boot — reinstall it
@@ -56,6 +63,8 @@ COPY --from=builder --chown=node:node /app/package.json ./package.json
 # Prisma schema is needed at runtime so `prisma migrate deploy` (run by the
 # entrypoint) can find migrations and the datasource block.
 COPY --from=builder --chown=node:node /app/prisma ./prisma
+# Curation panel SPA build — AppModule serves it when web/dist exists.
+COPY --from=builder --chown=node:node /app/web/dist ./web/dist
 
 # Editable copy for the headline generator (persona.md + copy.json). Baked in
 # so the app has sane content even without a mount; compose bind-mounts

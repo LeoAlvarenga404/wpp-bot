@@ -11,6 +11,8 @@ jest.mock('../whatsapp/wa.service');
 
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import type { CouponService } from '../coupon/coupon.service';
+import type { CouponView } from '../coupon/coupon.types';
 import type { ScoredDeal } from '../deal-score/types';
 import type { PipelineService } from '../pipeline/pipeline.service';
 import type { OpsConfigService } from '../ops-config/ops-config.service';
@@ -131,6 +133,7 @@ class FakeRepo implements ApprovalQueueRepo {
 function makeDeps(opts?: {
   threshold?: string;
   enqueueResult?: EnqueueResult;
+  couponView?: CouponView;
 }) {
   const repo = new FakeRepo();
   const pipeline = {
@@ -152,7 +155,10 @@ function makeDeps(opts?: {
     }),
     pruneOlderThan: jest.fn(async () => 0),
   };
-  return { repo, pipeline, opsConfig, config, decisions };
+  const coupons = {
+    resolveForDeal: jest.fn(async () => opts?.couponView ?? null),
+  } as unknown as CouponService;
+  return { repo, pipeline, opsConfig, config, decisions, coupons };
 }
 
 class TestApprovalQueue extends ApprovalQueueService {
@@ -169,6 +175,7 @@ function makeService(d: ReturnType<typeof makeDeps>) {
     d.opsConfig,
     d.config,
     d.decisions as any,
+    d.coupons,
   );
 }
 
@@ -391,5 +398,56 @@ describe('ApprovalQueueService.listPending', () => {
       },
     });
     expect(pending[0].expiresAt).toBeInstanceOf(Date);
+  });
+
+  it('renders the faithful WA caption from the snapshot (same template the group sees)', async () => {
+    const d = makeDeps({ threshold: '90' });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 85)]);
+
+    const [pending] = await svc.listPending();
+
+    // Same lines ofertasTemplate produces at send time: CAPS title, struck
+    // "De", green "Por ... à vista" with % off, link on the raw permalink
+    // (preview never mints affiliate/short links).
+    expect(pending.caption).toContain('➡️ PRODUTO MLB2');
+    expect(pending.caption).toContain('❌ De ~R$ 200~');
+    expect(pending.caption).toContain('✅ Por R$ 100 à vista  (-50%)');
+    expect(pending.caption).toContain('🛒 Link: https://ml/MLB2');
+    expect(pending.imageUrl).toBe('https://img/MLB2.jpg');
+  });
+
+  it('includes the coupon line when a coupon resolves for the snapshot deal', async () => {
+    const d = makeDeps({
+      threshold: '90',
+      couponView: {
+        code: 'SHOW10',
+        mode: 'PRICE',
+        finalCents: 9000,
+        discountLabel: '-R$ 10',
+        minCents: null,
+        validUntil: '2027-01-01T00:00:00.000Z',
+      },
+    });
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 85)]);
+
+    const [pending] = await svc.listPending();
+
+    expect(pending.caption).toContain('🎟️ Com o cupom SHOW10: R$ 90');
+  });
+
+  it('coupon resolve failure never blocks the listing — caption renders without the line', async () => {
+    const d = makeDeps({ threshold: '90' });
+    (d.coupons.resolveForDeal as jest.Mock).mockRejectedValue(
+      new Error('db down'),
+    );
+    const svc = makeService(d);
+    await svc.dispatchScored([makeScored('MLB2', 85)]);
+
+    const [pending] = await svc.listPending();
+
+    expect(pending.caption).toContain('➡️ PRODUTO MLB2');
+    expect(pending.caption).not.toContain('🎟️');
   });
 });

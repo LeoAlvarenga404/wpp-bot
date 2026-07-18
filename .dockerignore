@@ -22,3 +22,5 @@ MERCADO_LIVRE_API_REFERENCE.md
 REST.http
 cloudflared.log
 test
+web/node_modules
+web/dist

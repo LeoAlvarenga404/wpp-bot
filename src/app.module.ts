@@ -1,8 +1,9 @@
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { AffiliateModule } from './affiliate/affiliate.module';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { CouponModule } from './coupon/coupon.module';
 import { ApprovalModule } from './curation/approval.module';
 import { DbModule } from './db/db.module';
@@ -18,6 +19,15 @@ import { SharedLoggerModule } from './shared/logger.module';
 import { SourcesModule } from './sources/sources.module';
 import { WhatsappModule } from './whatsapp/wa.module';
 import { WorkerModule } from './worker/worker.module';
+
+// Curation panel SPA (web/dist, built by Vite). Registered only when the
+// build output exists so test bootstraps and API-only deployments don't
+// require a frontend build. ServeStatic mounts its catch-all during
+// onModuleInit — after every controller route — so API endpoints always win.
+const panelDist = join(process.cwd(), 'web', 'dist');
+const panelModule = existsSync(panelDist)
+  ? [ServeStaticModule.forRoot({ rootPath: panelDist })]
+  : [];
 
 @Module({
   imports: [
@@ -38,8 +48,7 @@ import { WorkerModule } from './worker/worker.module';
     WorkerModule,
     SchedulerModule,
     MetricsModule,
+    ...panelModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
 })
 export class AppModule {}

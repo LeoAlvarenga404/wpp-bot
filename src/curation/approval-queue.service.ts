@@ -7,14 +7,18 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
+import { CouponService } from '../coupon/coupon.service';
+import type { CouponView } from '../coupon/coupon.types';
 import type { ScoredDeal, ScoreReason } from '../deal-score/types';
 import { OpsConfigService } from '../ops-config/ops-config.service';
 import {
   PipelineService,
   type EnqueueResult,
 } from '../pipeline/pipeline.service';
+import { ofertasTemplate } from '../pipeline/templates/template-ofertas';
 import { keyToString } from '../sources/source.port';
 import { dayString } from '../shared/day';
+import { toHiResImage } from '../shared/hi-res-image';
 import {
   APPROVAL_QUEUE_REPO,
   type ApprovalQueueRepo,
@@ -46,6 +50,14 @@ export interface PendingSummary {
     thumbnail: string;
     permalink: string;
   };
+  /**
+   * The exact WA caption the group would see, rendered from the snapshot by
+   * the same template the send path uses. The link is the raw permalink —
+   * previews never mint affiliate/short links.
+   */
+  caption: string;
+  /** Hi-res image the publisher would attach. */
+  imageUrl: string;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -82,6 +94,7 @@ export class ApprovalQueueService {
     private readonly config: ConfigService,
     @Inject(CURATION_DECISION_REPO)
     private readonly decisions: CurationDecisionRepo,
+    private readonly coupons: CouponService,
   ) {
     this.tz = this.config.get<string>('TZ') ?? 'America/Sao_Paulo';
     this.ttlHours = Number(this.config.get<string>('APPROVAL_TTL_HOURS', '4'));
@@ -119,7 +132,7 @@ export class ApprovalQueueService {
   async listPending(): Promise<PendingSummary[]> {
     await this.expireOverdue();
     const rows = await this.repo.listPending();
-    return rows.map((row) => this.toSummary(row));
+    return Promise.all(rows.map((row) => this.toSummary(row)));
   }
 
   /**
@@ -205,8 +218,13 @@ export class ApprovalQueueService {
     return row;
   }
 
-  private toSummary(row: PendingDealRow): PendingSummary {
+  private async toSummary(row: PendingDealRow): Promise<PendingSummary> {
     const sd = row.snapshot as ScoredDeal;
+    const caption = ofertasTemplate({
+      sd,
+      link: sd.deal.raw.permalink,
+      couponView: await this.resolveCoupon(sd),
+    });
     return {
       id: row.id,
       catalogId: row.catalogId,
@@ -221,9 +239,29 @@ export class ApprovalQueueService {
         thumbnail: sd.deal.raw.thumbnail,
         permalink: sd.deal.raw.permalink,
       },
+      caption,
+      imageUrl: toHiResImage(sd.deal.raw.thumbnail || ''),
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
     };
+  }
+
+  /** Coupon line is best-effort — a coupon lookup failure never hides a card. */
+  private async resolveCoupon(sd: ScoredDeal): Promise<CouponView | undefined> {
+    try {
+      return (
+        (await this.coupons.resolveForDeal(
+          sd.deal,
+          sd.deal.raw.priceCents,
+          this.now(),
+        )) ?? undefined
+      );
+    } catch (err) {
+      this.logger.warn(
+        `coupon resolve failed (${keyToString(sd.deal.key)}): ${(err as Error).message}`,
+      );
+      return undefined;
+    }
   }
 
   /** Audit failures must never block a human decision — mirror the gate. */

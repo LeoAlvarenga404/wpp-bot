@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CouponModule } from '../coupon/coupon.module';
 import { DbModule } from '../db/db.module';
 import { OpsConfigModule } from '../ops-config/ops-config.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
@@ -17,7 +18,13 @@ import { CurationModule } from './curation.module';
  * CurationModule would create an import cycle.
  */
 @Module({
-  imports: [DbModule, PipelineModule, OpsConfigModule, CurationModule],
+  imports: [
+    DbModule,
+    PipelineModule,
+    OpsConfigModule,
+    CurationModule,
+    CouponModule,
+  ],
   controllers: [ApprovalController],
   providers: [
     PrismaApprovalQueueRepo,

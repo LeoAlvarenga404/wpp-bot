@@ -11,6 +11,7 @@ import type { TrustBadge } from '../queue/queue.types';
 import type { RawDeal } from '../sources/source.port';
 import type { PriceView } from '../pricing/price-view';
 import type { CouponView } from '../coupon/coupon.types';
+import { toHiResImage } from '../shared/hi-res-image';
 import { templates } from './templates';
 import type { CaptionTemplate } from './templates';
 import { ofertasTemplate } from './templates/template-ofertas';
@@ -64,7 +65,7 @@ export class FormatterService {
       hook,
     );
 
-    const imageUrl = this.toHiResImage(item.thumbnail || '');
+    const imageUrl = toHiResImage(item.thumbnail || '');
 
     return { caption: `${caption}\n\n${this.disclaimerLine()}`, imageUrl };
   }
@@ -84,7 +85,7 @@ export class FormatterService {
       priceView,
       couponView,
     });
-    const imageUrl = this.toHiResImage(raw.thumbnail || '');
+    const imageUrl = toHiResImage(raw.thumbnail || '');
     return { caption, imageUrl };
   }
 
@@ -117,7 +118,7 @@ export class FormatterService {
     );
     const header = `🔥 ${entries.length} ACHADOS NUM POST SÓ`;
     const caption = [header, '', blocks.join('\n\n➖➖➖\n\n')].join('\n');
-    const imageUrl = this.toHiResImage(
+    const imageUrl = toHiResImage(
       entries[0].scored.deal.raw.thumbnail || '',
     );
     return { caption, imageUrl };
@@ -160,16 +161,4 @@ export class FormatterService {
     return `_🔗 Link de afiliado. Preço visto às ${hhmm} — sujeito a alteração._`;
   }
 
-  private toHiResImage(original: string): string {
-    if (!original) return original;
-    const transformed = original
-      .replace('-I.jpg', '-F.jpg')
-      .replace('-O.jpg', '-F.jpg')
-      .replace('http://', 'https://');
-    if (!transformed || transformed === original) {
-      const httpsOnly = original.replace('http://', 'https://');
-      return httpsOnly || original;
-    }
-    return transformed;
-  }
 }
