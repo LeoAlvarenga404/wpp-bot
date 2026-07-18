@@ -23,6 +23,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # .env carries the HOST form of DATABASE_URL (localhost:5433) so host-side
+    # prisma migrate dev / studio work. Inside the compose network the app must
+    # use service DNS instead — `environment` wins over `env_file`.
+    environment:
+      DATABASE_URL: postgresql://wppbot:${POSTGRES_PASSWORD:-changeme}@postgres:5432/wppbot?schema=public
     # Host port 3001 (container still 3000). Avoids clash with a host
     # `npm start` on 3000 during local dev.
     ports:
