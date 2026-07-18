@@ -5,6 +5,7 @@ import { DbModule } from '../db/db.module';
 import { DedupModule } from '../dedup/dedup.module';
 import { OpsConfigModule } from '../ops-config/ops-config.module';
 import { PipelineModule } from '../pipeline/pipeline.module';
+import { PublisherModule } from '../publisher/publisher.module';
 import {
   APPROVAL_QUEUE_REPO,
   PrismaApprovalQueueRepo,
@@ -15,6 +16,7 @@ import { CurationModule } from './curation.module';
 import { ManualDealService } from './manual/manual-deal.service';
 import { MANUAL_RESOLVERS } from './manual/manual-resolver.port';
 import { MlManualResolver } from './manual/ml-manual-resolver';
+import { DmAlertService } from './dm-alert.service';
 
 /**
  * Lives in the curation area but is a separate module from CurationModule:
@@ -31,6 +33,7 @@ import { MlManualResolver } from './manual/ml-manual-resolver';
     CouponModule,
     DedupModule,
     AffiliateModule,
+    PublisherModule,
   ],
   controllers: [ApprovalController],
   providers: [
@@ -44,6 +47,7 @@ import { MlManualResolver } from './manual/ml-manual-resolver';
       useFactory: (ml: MlManualResolver) => [ml],
     },
     ManualDealService,
+    DmAlertService,
   ],
   exports: [ApprovalQueueService],
 })

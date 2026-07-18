@@ -14,6 +14,8 @@ export const OPS_CONFIG_KEYS = {
   QUIET_HOURS_ENABLED: { type: 'boolean', default: 'true' },
   /** Minutes between "N deals waiting" DM batches to the operator. */
   DM_BATCH_INTERVAL_MIN: { type: 'number', default: '30' },
+  /** JID of the operator to receive the DM alerts. */
+  OPERATOR_JID: { type: 'string', default: '' },
 } as const;
 
 export type OpsConfigKey = keyof typeof OPS_CONFIG_KEYS;
@@ -49,6 +51,10 @@ export class OpsConfigService {
     return this.getNumber('DM_BATCH_INTERVAL_MIN');
   }
 
+  async operatorJid(): Promise<string> {
+    return this.getString('OPERATOR_JID');
+  }
+
   async set(key: string, value: string): Promise<void> {
     const spec = OPS_CONFIG_KEYS[key as OpsConfigKey];
     if (!spec) {
@@ -58,7 +64,11 @@ export class OpsConfigService {
     }
     if (!this.isValid(spec.type, value)) {
       const expected =
-        spec.type === 'number' ? 'a number' : "'true' or 'false'";
+        spec.type === 'string'
+          ? 'a string'
+          : spec.type === 'number'
+            ? 'a number'
+            : "'true' or 'false'";
       throw new BadRequestException(
         `Key '${key}' expects ${expected}, got '${value}'`,
       );
@@ -103,8 +113,19 @@ export class OpsConfigService {
     return (await this.effective(key)).value.toLowerCase() !== 'false';
   }
 
-  private isValid(type: 'number' | 'boolean', value: string): boolean {
-    return type === 'number' ? isFiniteNumber(value) : isBooleanString(value);
+  private async getString(key: OpsConfigKey): Promise<string> {
+    return (await this.effective(key)).value;
+  }
+
+  private isValid(
+    type: 'number' | 'boolean' | 'string',
+    value: string,
+  ): boolean {
+    return type === 'string'
+      ? true
+      : type === 'number'
+        ? isFiniteNumber(value)
+        : isBooleanString(value);
   }
 }
 
