@@ -66,3 +66,11 @@ export interface HistoryItem {
   sentAt: string;
 }
 
+export interface CalibrationStats {
+  periodDays: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  avgApprovedScore: number | null;
+  avgRejectedScore: number | null;
+}

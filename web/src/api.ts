@@ -113,3 +113,18 @@ export async function rejectDeal(id: string): Promise<void> {
 export async function fetchHistory(page = 1, limit = 20): Promise<{ items: import('./types').HistoryItem[]; total: number }> {
   return request(`/history?page=${page}&limit=${limit}`);
 }
+
+export async function getOpsConfig(): Promise<{ values: Record<string, string> }> {
+  return request('/ops-config');
+}
+
+export async function setOpsConfig(key: string, value: string): Promise<{ values: Record<string, string> }> {
+  return request(`/ops-config/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    json: { value },
+  });
+}
+
+export async function getCalibrationStats(days = 7): Promise<import('./types').CalibrationStats> {
+  return request(`/calibration/stats?days=${days}`);
+}

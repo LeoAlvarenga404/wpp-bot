@@ -9,9 +9,11 @@ import {
 import { CurationGateService } from './curation-gate.service';
 import { CURATION_REPO, PrismaCurationRepo } from './curation.repo';
 import { CurationService } from './curation.service';
+import { CalibrationController } from './calibration.controller';
 
 @Module({
   imports: [DedupModule, JudgeModule, MetricsModule],
+  controllers: [CalibrationController],
   providers: [
     PrismaCurationRepo,
     { provide: CURATION_REPO, useExisting: PrismaCurationRepo },

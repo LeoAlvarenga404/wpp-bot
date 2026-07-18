@@ -5,6 +5,7 @@ function makePrisma() {
     curationDecision: {
       upsert: jest.fn().mockResolvedValue({}),
       deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
+      groupBy: jest.fn(),
     },
   };
 }
@@ -56,5 +57,32 @@ describe('PrismaCurationDecisionRepo', () => {
     expect(prisma.curationDecision.deleteMany).toHaveBeenCalledWith({
       where: { firstAt: { lt: cutoff } },
     });
+  });
+
+  it('aggregates calibration stats correctly', async () => {
+    const prisma = makePrisma();
+    prisma.curationDecision.groupBy = jest.fn().mockResolvedValue([
+      { outcome: 'approved', _sum: { count: 10 }, _avg: { score: 95 } },
+      { outcome: 'rejected', _sum: { count: 42 }, _avg: { score: 32.4 } },
+      { outcome: 'expired', _sum: { count: 5 }, _avg: { score: null } },
+    ]);
+    const repo = new PrismaCurationDecisionRepo(prisma as any);
+    
+    const stats = await repo.getCalibrationStats(7);
+    
+    expect(stats).toEqual({
+      periodDays: 7,
+      approved: 10,
+      rejected: 42,
+      expired: 5,
+      avgApprovedScore: 95,
+      avgRejectedScore: 32,
+    });
+    
+    // Check that gte date is roughly 7 days ago
+    const callArgs = prisma.curationDecision.groupBy.mock.calls[0][0];
+    const dateUsed = callArgs.where.firstAt.gte;
+    const expectedTime = new Date().getTime() - 7 * 24 * 3600 * 1000;
+    expect(Math.abs(dateUsed.getTime() - expectedTime)).toBeLessThan(1000 * 5); // 5s tolerance
   });
 });

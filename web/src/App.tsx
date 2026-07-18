@@ -11,6 +11,7 @@ import {
 } from './api';
 import { DealCard } from './components/DealCard';
 import { HistoryPanel } from './components/HistoryPanel';
+import { ConfigPanel } from './components/ConfigPanel';
 import type { ApproveOptions, PendingDeal } from './types';
 
 const POLL_MS = 20_000;
@@ -18,7 +19,7 @@ const POLL_MS = 20_000;
 type Status = 'loading' | 'ready' | 'unauthorized' | 'error';
 
 export default function App() {
-  const [tab, setTab] = useState<'pending' | 'history'>('pending');
+  const [tab, setTab] = useState<'pending' | 'history' | 'config'>('pending');
   const [deals, setDeals] = useState<PendingDeal[]>([]);
   const [status, setStatus] = useState<Status>('loading');
   const [toast, setToast] = useState<string | null>(null);
@@ -128,6 +129,12 @@ export default function App() {
             >
               Histórico
             </button>
+            <button
+              className={`text-lg font-bold ${tab === 'config' ? 'text-stone-100' : 'text-stone-500'}`}
+              onClick={() => setTab('config')}
+            >
+              Config
+            </button>
           </div>
           {tab === 'pending' && (
             <span className="rounded-full bg-stone-800 px-2.5 py-0.5 text-sm text-stone-300">
@@ -140,6 +147,8 @@ export default function App() {
       <main className="mx-auto flex max-w-md flex-col gap-4 px-3 py-4 pb-10">
         {tab === 'history' ? (
           <HistoryPanel onUnauthorized={() => setStatus('unauthorized')} />
+        ) : tab === 'config' ? (
+          <ConfigPanel onUnauthorized={() => setStatus('unauthorized')} />
         ) : (
           <>
             {status === 'loading' && (
