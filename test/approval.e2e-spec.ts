@@ -39,6 +39,10 @@ import {
 import type { ScoredDeal } from '../src/deal-score/types';
 
 const CATALOG_PREFIX = 'e2e-approval';
+// Manual-composer submits derive the ML catalog id from the pasted link, so
+// their catalogIds don't carry CATALOG_PREFIX — track them for cleanup.
+const SUBMIT_MLB = 'MLB90019001';
+const SUBMIT_MLB2 = 'MLB90019002';
 
 function makeScored(id: string, score: number): ScoredDeal {
   const key = { source: 'ml' as const, externalId: `${CATALOG_PREFIX}-${id}` };
@@ -160,14 +164,30 @@ describe('Approval queue (e2e)', () => {
 
   afterAll(async () => {
     // Leave the shared database exactly as we found it.
+    const submitIds = [`ml:${SUBMIT_MLB}`, `ml:${SUBMIT_MLB2}`];
     await (prisma as any).pendingDeal.deleteMany({
-      where: { catalogId: { contains: CATALOG_PREFIX } },
+      where: {
+        OR: [
+          { catalogId: { contains: CATALOG_PREFIX } },
+          { catalogId: { in: submitIds } },
+        ],
+      },
     });
     await (prisma as any).curationDecision.deleteMany({
-      where: { catalogId: { contains: CATALOG_PREFIX } },
+      where: {
+        OR: [
+          { catalogId: { contains: CATALOG_PREFIX } },
+          { catalogId: { in: submitIds } },
+        ],
+      },
     });
     await (prisma as any).dedupEntry.deleteMany({
-      where: { catalogId: { contains: CATALOG_PREFIX } },
+      where: {
+        OR: [
+          { catalogId: { contains: CATALOG_PREFIX } },
+          { catalogId: { in: submitIds } },
+        ],
+      },
     });
     await app.close();
   });
@@ -465,62 +485,120 @@ describe('Approval queue (e2e)', () => {
     expect(decision).toMatchObject({ outcome: 'expired', score: 70 });
   });
 
-  it('POST /approval/manual/resolve fills a pending card from a pasted URL', async () => {
+  it('POST /approval/manual/resolve returns prefill fields and creates NO card', async () => {
     const res = await request(app.getHttpServer())
       .post('/approval/manual/resolve')
       .set('x-api-key', process.env.API_KEY ?? '')
       .send({ url: 'https://www.mercadolivre.com.br/fone/p/MLB123' })
       .expect(201);
 
+    // Prefill for the composer form — no card, no key.
     expect(res.body).toMatchObject({
-      catalogId: `ml:${CATALOG_PREFIX}-manual`,
-      score: 100,
-      preview: {
-        title: 'Fone Manual XYZ',
+      source: 'ml',
+      title: 'Fone Manual XYZ',
+      priceCents: 12990,
+      originalPriceCents: 25990,
+      discountPercent: 50,
+      permalink: 'https://www.mercadolivre.com.br/fone/p/MLB123',
+      installmentsNoInterest: true,
+    });
+    expect(res.body.id).toBeUndefined();
+
+    // Nothing landed in the queue.
+    const count = await (prisma as any).pendingDeal.count({
+      where: { catalogId: { contains: `${CATALOG_PREFIX}-manual` } },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('POST /approval/manual/preview renders the caption with the coupon, creating no card', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual/preview')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({
+        store: 'outro',
+        title: `Produto ${CATALOG_PREFIX}-prevm`,
+        priceCents: 10000,
+        thumbnail: 'https://example.com/prevm.jpg',
+        coupon: { code: 'SHOW10', finalCents: 8000 },
+      })
+      .expect(201);
+
+    expect(res.body.caption).toContain('SHOW10');
+    expect(res.body.imageUrl).toBe('https://example.com/prevm.jpg');
+
+    const count = await (prisma as any).pendingDeal.count({
+      where: { catalogId: { contains: `${CATALOG_PREFIX}-prevm` } },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('POST /approval/manual (dispatch=false) creates a pending card, audited under approval_manual', async () => {
+    const permalink = `https://www.mercadolivre.com.br/p/${SUBMIT_MLB}`;
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({
+        store: 'ml',
+        title: 'Fone Submit XYZ',
         priceCents: 12990,
         originalPriceCents: 25990,
-        discountPercent: 50,
-      },
-      postedDaysAgo: null,
-    });
-    expect(res.body.id).toBeDefined();
-    expect(res.body.caption).toContain('FONE MANUAL XYZ');
+        thumbnail: 'https://example.com/submit.jpg',
+        permalink,
+      })
+      .expect(201);
 
-    // It really landed in the queue and rides the same flow.
+    // ML deals derive the catalog id from the link so dedup aligns.
+    expect(res.body.catalogId).toBe(`ml:${SUBMIT_MLB}`);
+    expect(enqueueScored).not.toHaveBeenCalled();
+
     const row = await (prisma as any).pendingDeal.findFirst({
-      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, status: 'PENDING' },
+      where: { catalogId: `ml:${SUBMIT_MLB}`, status: 'PENDING' },
     });
     expect(row).toBeTruthy();
     expect(row.snapshot.deal.raw.feedId).toBe('manual');
-  });
 
-  it('approving a manual deal audits under approval_manual (not approval), keeping calibration clean', async () => {
-    await request(app.getHttpServer())
-      .post('/approval/manual/resolve')
-      .set('x-api-key', process.env.API_KEY ?? '')
-      .send({ url: 'https://www.mercadolivre.com.br/fone/p/MLB123' })
-      .expect(201);
-    const row = await (prisma as any).pendingDeal.findFirst({
-      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, status: 'PENDING' },
-    });
-
+    // Approving it audits under approval_manual, keeping calibration clean.
     await request(app.getHttpServer())
       .post(`/approval/${row.id}/approve`)
       .set('x-api-key', process.env.API_KEY ?? '')
       .expect(201);
-
     const manualDecision = await (prisma as any).curationDecision.findFirst({
-      where: {
-        catalogId: `ml:${CATALOG_PREFIX}-manual`,
-        stage: 'approval_manual',
-      },
+      where: { catalogId: `ml:${SUBMIT_MLB}`, stage: 'approval_manual' },
     });
     expect(manualDecision).toMatchObject({ outcome: 'approved' });
-    // The score-based calibration stage must not carry the manual sentinel.
     const plain = await (prisma as any).curationDecision.findFirst({
-      where: { catalogId: `ml:${CATALOG_PREFIX}-manual`, stage: 'approval' },
+      where: { catalogId: `ml:${SUBMIT_MLB}`, stage: 'approval' },
     });
     expect(plain).toBeNull();
+  });
+
+  it('POST /approval/manual (dispatch=true) creates the card and sends now (urgent)', async () => {
+    const permalink = `https://www.mercadolivre.com.br/p/${SUBMIT_MLB2}`;
+    const res = await request(app.getHttpServer())
+      .post('/approval/manual')
+      .set('x-api-key', process.env.API_KEY ?? '')
+      .send({
+        store: 'ml',
+        title: 'Fone Dispara XYZ',
+        priceCents: 9990,
+        thumbnail: 'https://example.com/dispatch.jpg',
+        permalink,
+        dispatch: true,
+      })
+      .expect(201);
+
+    expect(res.body).toMatchObject({
+      catalogId: `ml:${SUBMIT_MLB2}`,
+      enqueued: 1,
+    });
+    expect(enqueueScored).toHaveBeenCalledTimes(1);
+    const call = enqueueScored.mock.calls[0] as unknown as [
+      ScoredDeal[],
+      number | undefined,
+      { urgent?: boolean; uniqueJobId?: boolean } | undefined,
+    ];
+    expect(call[2]).toMatchObject({ urgent: true, uniqueJobId: true });
   });
 
   it('POST /approval/manual/resolve returns 422 on scrape failure and creates no card', async () => {
