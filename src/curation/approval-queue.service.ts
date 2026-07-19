@@ -290,6 +290,17 @@ export class ApprovalQueueService {
     return { caption, imageUrl: toHiResImage(sd.deal.raw.thumbnail || '') };
   }
 
+  /**
+   * Stateless render for the manual composer's live preview: no row, no
+   * decision — renders the exact caption a manual card/dispatch would show
+   * from a synthetic ScoredDeal (coupon honored via curatorEdits).
+   */
+  async renderManualPreview(
+    sd: ScoredDeal,
+  ): Promise<{ caption: string; imageUrl: string }> {
+    return this.renderCaption(sd, await this.resolveCoupon(sd));
+  }
+
   async reject(id: string): Promise<{ id: string; catalogId: string }> {
     const row = await this.mustBePending(id);
     await this.repo.markDecided(row.id, 'REJECTED', this.now());
@@ -415,8 +426,14 @@ export class ApprovalQueueService {
     }
   }
 
-  /** Coupon line is best-effort — a coupon lookup failure never hides a card. */
+  /** Coupon line is best-effort — a coupon lookup failure never hides a card.
+   *  A curator-set coupon (manual composer / card edit) wins over the
+   *  automatic resolver so the panel and the send path agree. */
   private async resolveCoupon(sd: ScoredDeal): Promise<CouponView | undefined> {
+    const edit = sd.curatorEdits?.coupon;
+    if (edit) {
+      return couponViewFromCuratorEdit(edit, sd.deal.raw.priceCents, this.now());
+    }
     try {
       return (
         (await this.coupons.resolveForDeal(

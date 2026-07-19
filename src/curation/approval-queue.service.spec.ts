@@ -723,3 +723,16 @@ describe('ApprovalQueueService.listPending', () => {
     expect(pending.caption).not.toContain('🎟️');
   });
 });
+
+describe('renderManualPreview', () => {
+  it('renders the curator coupon from the snapshot', async () => {
+    const svc = makeService(makeDeps());
+    const sd = makeScored('MLB7', 100);
+    sd.deal.raw.priceCents = 10000;
+    sd.curatorEdits = { coupon: { code: 'JBL20', finalCents: 8000 } };
+
+    const out = await svc.renderManualPreview(sd);
+
+    expect(out.caption).toContain('JBL20');
+  });
+});
