@@ -42,7 +42,9 @@ describe('MlManualResolver', () => {
     const scraper: ProductScraperPort = {
       scrapeProductView: jest.fn(async () => view),
     };
-    return { resolver: new MlManualResolver(scraper), scraper };
+    // Identity expander — full-link tests never hit the short-link branch.
+    const expander = { expand: jest.fn(async (u: string) => u) };
+    return { resolver: new MlManualResolver(scraper, expander), scraper };
   };
 
   it('claims mercadolivre and meli.la URLs, rejects foreign ones', () => {
@@ -105,5 +107,57 @@ describe('MlManualResolver', () => {
     await expect(
       resolver.resolve('https://www.mercadolivre.com.br/fone/p/MLB123456'),
     ).rejects.toMatchObject({ code: 'scrape_failed' });
+  });
+});
+
+describe('MlManualResolver short links', () => {
+  it('expands a meli.la link, then resolves with the expanded id + url', async () => {
+    const scraper: ProductScraperPort = {
+      scrapeProductView: jest.fn(async () => makeView()),
+    };
+    const expander = {
+      expand: jest.fn(
+        async () => 'https://www.mercadolivre.com.br/p/MLB123',
+      ),
+    };
+    const resolver = new MlManualResolver(scraper, expander);
+
+    const out = await resolver.resolve('https://meli.la/x9Kq2');
+
+    expect(expander.expand).toHaveBeenCalledWith('https://meli.la/x9Kq2');
+    expect(out.key.externalId).toBe('MLB123');
+    expect(out.permalink).toBe('https://www.mercadolivre.com.br/p/MLB123');
+    expect(scraper.scrapeProductView).toHaveBeenCalledWith(
+      'https://www.mercadolivre.com.br/p/MLB123',
+    );
+  });
+
+  it('does NOT expand a link that already carries an MLB id', async () => {
+    const scraper: ProductScraperPort = {
+      scrapeProductView: jest.fn(async () => makeView()),
+    };
+    const expander = { expand: jest.fn(async (u: string) => u) };
+    const resolver = new MlManualResolver(scraper, expander);
+
+    await resolver.resolve('https://www.mercadolivre.com.br/p/MLB999');
+
+    expect(expander.expand).not.toHaveBeenCalled();
+  });
+
+  it('throws invalid_url when expansion still yields no id', async () => {
+    const scraper: ProductScraperPort = {
+      scrapeProductView: jest.fn(async () => makeView()),
+    };
+    const expander = {
+      expand: jest.fn(
+        async () => 'https://mercadolivre.com.br/ofertas',
+      ),
+    };
+    const resolver = new MlManualResolver(scraper, expander);
+
+    await expect(
+      resolver.resolve('https://meli.la/nope'),
+    ).rejects.toMatchObject({ code: 'invalid_url' });
+    expect(scraper.scrapeProductView).not.toHaveBeenCalled();
   });
 });

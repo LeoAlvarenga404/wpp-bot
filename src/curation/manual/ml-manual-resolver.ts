@@ -4,6 +4,11 @@ import {
   type ProductScraperPort,
 } from '../../pricing/product-scraper.port';
 import {
+  SHORT_URL_EXPANDER,
+  isShortMeliUrl,
+  type ShortUrlExpander,
+} from './url-expander';
+import {
   ManualResolveError,
   type ManualDealResolver,
   type ResolvedManualDeal,
@@ -35,6 +40,8 @@ export class MlManualResolver implements ManualDealResolver {
   constructor(
     @Inject(PRODUCT_SCRAPER_PORT)
     private readonly scraper: ProductScraperPort,
+    @Inject(SHORT_URL_EXPANDER)
+    private readonly expander: ShortUrlExpander,
   ) {}
 
   canResolve(url: string): boolean {
@@ -42,7 +49,14 @@ export class MlManualResolver implements ManualDealResolver {
   }
 
   async resolve(url: string): Promise<ResolvedManualDeal> {
-    const externalId = extractMlId(url);
+    let target = url;
+    let externalId = extractMlId(target);
+    // A short meli.la link carries no MLB id — expand the redirect first, then
+    // extract the id and scrape the canonical page.
+    if (!externalId && isShortMeliUrl(target)) {
+      target = await this.expander.expand(target);
+      externalId = extractMlId(target);
+    }
     if (!externalId) {
       throw new ManualResolveError(
         'invalid_url',
@@ -50,7 +64,7 @@ export class MlManualResolver implements ManualDealResolver {
       );
     }
 
-    const view = await this.scraper.scrapeProductView(url);
+    const view = await this.scraper.scrapeProductView(target);
     if (!view || typeof view.priceCents !== 'number') {
       throw new ManualResolveError(
         'scrape_failed',
@@ -68,7 +82,7 @@ export class MlManualResolver implements ManualDealResolver {
       // when the page shows no explicit "-N%" label (see buildPriceView).
       discountPercent: view.discountPercent ?? 0,
       thumbnail: view.thumbnail,
-      permalink: url,
+      permalink: target,
       installmentsNoInterest: view.installments?.noInterest ?? false,
     };
   }
