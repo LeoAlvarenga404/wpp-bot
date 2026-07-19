@@ -17,18 +17,31 @@ import {
   type ManualDealResolver,
   type ResolvedManualDeal,
 } from './manual-resolver.port';
-import { CreateGenericManualDto } from '../dto/create-generic-manual.dto';
+import { extractMlId } from './ml-manual-resolver';
+import { CreateManualDealDto } from '../dto/create-manual-deal.dto';
+import { PreviewManualDto } from '../dto/preview-manual.dto';
+import type { ScoredDeal } from '../../deal-score/types';
 import type { SourceId } from '../../sources/source.port';
 
+/** The resolved fields the panel prefills the composer with — no card yet. */
+export type ResolvedManualView = Omit<ResolvedManualDeal, 'key'>;
+
+/** Result of a dispatched submit — mirrors ApprovalQueueService.approve. */
+export interface DispatchResult {
+  id: string;
+  catalogId: string;
+  enqueued: number;
+  targets: number;
+}
+
 /**
- * Entry point for the panel's "deal manual" flow (issue #8). Picks the first
- * registered resolver that claims the pasted URL, turns the resolved product
- * into a synthetic ScoredDeal, and drops it into the SAME approval queue as
- * pipeline deals — so edit / preview / urgent / dedup / send are all reused.
+ * Entry point for the panel's "Novo deal" composer. Three moves:
+ *  - resolveUrl: paste a URL → prefill fields (no card created).
+ *  - preview: render the exact caption a card/dispatch would show (stateless).
+ *  - submit: create the pending card and, with dispatch, approve it urgent.
  *
- * The common path is store-agnostic: nothing here is ML-specific. Adding
- * Shopee (API) or a universal manual form is a new resolver in the array, no
- * change to this service.
+ * The synthetic ScoredDeal path is store-agnostic — a manual deal and a
+ * pipeline deal publish through identical code (toScoredDeal → approval queue).
  */
 @Injectable()
 export class ManualDealService {
@@ -40,17 +53,17 @@ export class ManualDealService {
     private readonly approvalQueue: ApprovalQueueService,
   ) {}
 
-  async resolveUrl(url: string): Promise<PendingSummary> {
+  /** Resolve a pasted URL into prefill fields. Creates NO card. */
+  async resolveUrl(url: string): Promise<ResolvedManualView> {
     const resolver = this.resolvers.find((r) => r.canResolve(url));
     if (!resolver) {
       throw new BadRequestException({
         code: 'unsupported_url',
         message:
-          'Nenhuma loja reconhece essa URL. Use o formulário manual para lojas sem integração.',
+          'Nenhuma loja reconhece essa URL. Preencha os campos manualmente.',
       });
     }
-
-    let resolved;
+    let resolved: ResolvedManualDeal;
     try {
       resolved = await resolver.resolve(url);
     } catch (err) {
@@ -67,35 +80,80 @@ export class ManualDealService {
       }
       throw err;
     }
-
-    return this.approvalQueue.createManual(toScoredDeal(resolved));
+    const { key: _key, ...view } = resolved;
+    return view;
   }
 
-  async createGeneric(dto: CreateGenericManualDto): Promise<PendingSummary> {
-    const externalId = createHash('md5')
-      .update(dto.permalink)
-      .digest('hex')
-      .substring(0, 12);
+  /** Stateless caption render for the composer's live preview. */
+  async preview(
+    dto: PreviewManualDto,
+  ): Promise<{ caption: string; imageUrl: string }> {
+    return this.approvalQueue.renderManualPreview(this.fieldsToScored(dto));
+  }
+
+  /** Create a pending card; dispatch=true approves it urgent in the same call. */
+  async submit(
+    dto: CreateManualDealDto,
+  ): Promise<PendingSummary | DispatchResult> {
+    const sd = this.fieldsToScored(dto);
+    const card = await this.approvalQueue.createManual(sd);
+    if (dto.dispatch === true) {
+      return this.approvalQueue.approve(card.id, undefined, { urgent: true });
+    }
+    return card;
+  }
+
+  private fieldsToScored(
+    dto: CreateManualDealDto | PreviewManualDto,
+  ): ScoredDeal {
+    const source = dto.store as SourceId;
+    const externalId = this.deriveId(source, dto.permalink, dto.title);
 
     let discountPercent = 0;
     if (dto.originalPriceCents && dto.originalPriceCents > dto.priceCents) {
       discountPercent = Math.round(
-        ((dto.originalPriceCents - dto.priceCents) / dto.originalPriceCents) * 100,
+        ((dto.originalPriceCents - dto.priceCents) / dto.originalPriceCents) *
+          100,
       );
     }
 
     const resolved: ResolvedManualDeal = {
-      key: { source: dto.store as SourceId, externalId },
-      source: dto.store as SourceId,
+      key: { source, externalId },
+      source,
       title: dto.title,
       priceCents: dto.priceCents,
       originalPriceCents: dto.originalPriceCents ?? null,
       discountPercent,
       thumbnail: dto.thumbnail,
-      permalink: dto.permalink,
-      installmentsNoInterest: false,
+      permalink: dto.permalink ?? '',
+      installmentsNoInterest: dto.installmentsNoInterest ?? false,
     };
 
-    return this.approvalQueue.createManual(toScoredDeal(resolved));
+    const sd = toScoredDeal(resolved);
+    if (dto.coupon) {
+      sd.curatorEdits = {
+        coupon: { code: dto.coupon.code, finalCents: dto.coupon.finalCents },
+      };
+    }
+    return sd;
+  }
+
+  /**
+   * ML: catalog id from the link so dedup aligns with pipeline deals.
+   * Otherwise a stable 12-char md5 of the link (or title when link-less).
+   */
+  private deriveId(
+    source: SourceId,
+    permalink: string | undefined,
+    title: string,
+  ): string {
+    if (source === 'ml' && permalink) {
+      const mlb = extractMlId(permalink);
+      if (mlb) return mlb;
+    }
+    return createHash('md5')
+      .update(permalink || title)
+      .digest('hex')
+      .substring(0, 12);
   }
 }

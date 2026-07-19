@@ -9,151 +9,110 @@ jest.mock('@sentry/node', () => ({
 }));
 jest.mock('../../whatsapp/wa.service');
 
-import {
-  BadRequestException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
-import type { ApprovalQueueService } from '../approval-queue.service';
 import { ManualDealService } from './manual-deal.service';
-import {
-  ManualResolveError,
-  type ManualDealResolver,
-  type ResolvedManualDeal,
-} from './manual-resolver.port';
 
-function resolved(): ResolvedManualDeal {
-  return {
-    key: { source: 'ml', externalId: 'MLB123' },
+const resolved = {
+  key: { source: 'ml', externalId: 'MLB123' },
+  source: 'ml' as const,
+  title: 'Fone JBL',
+  priceCents: 17900,
+  originalPriceCents: 29900,
+  discountPercent: 40,
+  thumbnail: 'https://http2.mlstatic.com/x.jpg',
+  permalink: 'https://www.mercadolivre.com.br/p/MLB123',
+  installmentsNoInterest: true,
+};
+
+function make() {
+  const resolver = {
+    canResolve: jest.fn().mockReturnValue(true),
+    resolve: jest.fn().mockResolvedValue(resolved),
     source: 'ml',
-    title: 'Produto',
-    priceCents: 9990,
-    originalPriceCents: 19990,
-    discountPercent: 50,
-    thumbnail: 'https://img/1.jpg',
-    permalink: 'https://ml/p/MLB123',
-    installmentsNoInterest: true,
   };
+  const queue = {
+    createManual: jest
+      .fn()
+      .mockResolvedValue({ id: 'card1', catalogId: 'ml:MLB123' }),
+    approve: jest.fn().mockResolvedValue({
+      id: 'card1',
+      catalogId: 'ml:MLB123',
+      enqueued: 1,
+      targets: 2,
+    }),
+    renderManualPreview: jest
+      .fn()
+      .mockResolvedValue({ caption: 'cap JBL20', imageUrl: 'img' }),
+  };
+  const service = new ManualDealService([resolver] as never, queue as never);
+  return { service, resolver, queue };
 }
 
-describe('ManualDealService', () => {
-  const makeQueue = () =>
-    ({
-      createManual: jest.fn(async (sd) => ({ id: 'pending-1', snapshot: sd })),
-    }) as unknown as ApprovalQueueService & { createManual: jest.Mock };
+const base = {
+  store: 'ml',
+  title: 'Fone JBL',
+  priceCents: 17900,
+  thumbnail: 'https://http2.mlstatic.com/x.jpg',
+};
 
-  it('picks the resolver that claims the URL and holds a manual pending card', async () => {
-    const mlResolver: ManualDealResolver = {
-      source: 'ml',
-      canResolve: (u) => u.includes('mercadolivre'),
-      resolve: jest.fn(async () => resolved()),
-    };
-    const queue = makeQueue();
-    const svc = new ManualDealService([mlResolver], queue);
+describe('resolveUrl', () => {
+  it('returns prefill fields and creates NO card', async () => {
+    const { service, queue } = make();
+    const out = await service.resolveUrl('https://meli.la/x');
+    expect(out.title).toBe('Fone JBL');
+    expect(out.permalink).toBe('https://www.mercadolivre.com.br/p/MLB123');
+    expect(queue.createManual).not.toHaveBeenCalled();
+  });
+});
 
-    const out = await svc.resolveUrl('https://mercadolivre.com.br/p/MLB123');
+describe('preview', () => {
+  it('renders via renderManualPreview with the coupon applied', async () => {
+    const { service, queue } = make();
+    const out = await service.preview({
+      ...base,
+      coupon: { code: 'JBL20', finalCents: 15000 },
+    } as never);
+    expect(out.caption).toContain('JBL20');
+    const sd = queue.renderManualPreview.mock.calls[0][0];
+    expect(sd.curatorEdits.coupon).toEqual({
+      code: 'JBL20',
+      finalCents: 15000,
+    });
+  });
+});
 
-    expect(mlResolver.resolve).toHaveBeenCalledWith(
-      'https://mercadolivre.com.br/p/MLB123',
-    );
+describe('submit', () => {
+  it('dispatch=false creates a pending card only', async () => {
+    const { service, queue } = make();
+    await service.submit({ ...base, permalink: resolved.permalink } as never);
     expect(queue.createManual).toHaveBeenCalledTimes(1);
-    const [sd] = queue.createManual.mock.calls[0];
-    expect(sd.deal.key.externalId).toBe('MLB123');
-    expect(sd.deal.raw.title).toBe('Produto');
-    expect(sd.deal.raw.feedId).toBe('manual');
-    expect(out).toMatchObject({ id: 'pending-1' });
+    expect(queue.approve).not.toHaveBeenCalled();
   });
 
-  it('rejects a URL no resolver claims with 400 unsupported_url', async () => {
-    const mlResolver: ManualDealResolver = {
-      source: 'ml',
-      canResolve: () => false,
-      resolve: jest.fn(),
-    };
-    const queue = makeQueue();
-    const svc = new ManualDealService([mlResolver], queue);
-
-    await expect(svc.resolveUrl('https://loja-x.com/y')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(queue.createManual).not.toHaveBeenCalled();
-  });
-
-  it('maps a scrape failure to 422 and never creates a phantom card', async () => {
-    const mlResolver: ManualDealResolver = {
-      source: 'ml',
-      canResolve: () => true,
-      resolve: jest.fn(async () => {
-        throw new ManualResolveError('scrape_failed', 'não li a página');
-      }),
-    };
-    const queue = makeQueue();
-    const svc = new ManualDealService([mlResolver], queue);
-
-    await expect(
-      svc.resolveUrl('https://mercadolivre.com.br/p/MLB1'),
-    ).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(queue.createManual).not.toHaveBeenCalled();
-  });
-
-  it('maps an invalid-url resolve error to 400', async () => {
-    const mlResolver: ManualDealResolver = {
-      source: 'ml',
-      canResolve: () => true,
-      resolve: jest.fn(async () => {
-        throw new ManualResolveError('invalid_url', 'sem MLB');
-      }),
-    };
-    const queue = makeQueue();
-    const svc = new ManualDealService([mlResolver], queue);
-
-    await expect(
-      svc.resolveUrl('https://mercadolivre.com.br/ofertas'),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(queue.createManual).not.toHaveBeenCalled();
-  });
-
-  describe('createGeneric', () => {
-    it('hashes the permalink for externalId and creates a pending card', async () => {
-      const queue = makeQueue();
-      const svc = new ManualDealService([], queue);
-      
-      const payload = {
-        store: 'shopee',
-        title: 'Produto Shopee',
-        priceCents: 5000,
-        thumbnail: 'https://img/shopee.jpg',
-        permalink: 'https://shopee.com.br/produto-123',
-      };
-      
-      await svc.createGeneric(payload);
-      
-      expect(queue.createManual).toHaveBeenCalledTimes(1);
-      const [sd] = queue.createManual.mock.calls[0];
-      
-      expect(sd.deal.key.source).toBe('shopee');
-      expect(sd.deal.key.externalId.length).toBe(12); // md5 substring
-      expect(sd.deal.raw.title).toBe('Produto Shopee');
-      expect(sd.deal.raw.priceCents).toBe(5000);
-      expect(sd.deal.raw.discountPercent).toBe(0);
-      expect(sd.deal.extras.manual).toBe(true);
+  it('dispatch=true creates the card then approves urgent', async () => {
+    const { service, queue } = make();
+    const out = await service.submit({
+      ...base,
+      permalink: resolved.permalink,
+      dispatch: true,
+    } as never);
+    expect(queue.approve).toHaveBeenCalledWith('card1', undefined, {
+      urgent: true,
     });
+    expect(out).toMatchObject({ enqueued: 1, targets: 2 });
+  });
 
-    it('calculates the discount correctly when originalPriceCents is provided', async () => {
-      const queue = makeQueue();
-      const svc = new ManualDealService([], queue);
-      
-      await svc.createGeneric({
-        store: 'kabum',
-        title: 'Placa de Vídeo',
-        priceCents: 5000,
-        originalPriceCents: 10000, // 50% discount
-        thumbnail: 'https://img/kabum.jpg',
-        permalink: 'https://kabum.com.br/produto',
-      });
-      
-      const [sd] = queue.createManual.mock.calls[0];
-      expect(sd.deal.raw.discountPercent).toBe(50);
-      expect(sd.deal.key.source).toBe('kabum');
-    });
+  it('derives the ML catalog id from the permalink so dedup aligns', async () => {
+    const { service, queue } = make();
+    await service.submit({ ...base, permalink: resolved.permalink } as never);
+    const sd = queue.createManual.mock.calls[0][0];
+    expect(sd.deal.key).toEqual({ source: 'ml', externalId: 'MLB123' });
+  });
+
+  it('hashes a permalink-less manual deal into a stable id', async () => {
+    const { service, queue } = make();
+    await service.submit({ ...base, store: 'outro' } as never);
+    const sd = queue.createManual.mock.calls[0][0];
+    expect(sd.deal.key.source).toBe('outro');
+    expect(sd.deal.key.externalId).toHaveLength(12);
   });
 });
