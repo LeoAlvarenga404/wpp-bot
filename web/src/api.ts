@@ -1,4 +1,10 @@
-import type { ApproveOptions, CuratorEdits, PendingDeal } from './types';
+import type {
+  ApproveOptions,
+  CuratorEdits,
+  ManualFields,
+  PendingDeal,
+  ResolvedManualView,
+} from './types';
 
 const API_KEY_STORAGE = 'wpp-panel-api-key';
 
@@ -63,7 +69,15 @@ async function request<T>(
     }
     throw new GoneError(body?.message ?? `HTTP ${res.status}`);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // Surface the backend's message (invalid_url / scrape_failed / validation)
+    // so the composer can show a clear reason instead of a bare status code.
+    const body = (await res.json().catch(() => null)) as {
+      message?: string;
+      code?: string;
+    } | null;
+    throw new Error(body?.message ?? `HTTP ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -101,6 +115,39 @@ export async function previewDeal(
   return request(`/approval/${encodeURIComponent(id)}/preview`, {
     method: 'POST',
     json: { edits },
+  });
+}
+
+/** Composer: paste a URL → prefill fields (no card created). */
+export async function resolveManual(
+  url: string,
+): Promise<ResolvedManualView> {
+  return request<ResolvedManualView>('/approval/manual/resolve', {
+    method: 'POST',
+    json: { url },
+  });
+}
+
+/** Composer: live caption preview (stateless render). */
+export async function previewManual(
+  fields: ManualFields,
+): Promise<{ caption: string; imageUrl: string }> {
+  return request('/approval/manual/preview', { method: 'POST', json: fields });
+}
+
+/** Composer: submit a deal — queue (dispatch=false) or send now (true). */
+export async function submitManual(
+  fields: ManualFields,
+  dispatch: boolean,
+): Promise<{
+  id: string;
+  catalogId: string;
+  enqueued?: number;
+  targets?: number;
+}> {
+  return request('/approval/manual', {
+    method: 'POST',
+    json: { ...fields, dispatch },
   });
 }
 

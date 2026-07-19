@@ -66,6 +66,35 @@ export interface HistoryItem {
   sentAt: string;
 }
 
+export interface ManualCoupon {
+  code: string;
+  finalCents?: number;
+}
+
+/** Prefill returned by POST /approval/manual/resolve (ResolvedManualView). */
+export interface ResolvedManualView {
+  source: string;
+  title: string;
+  priceCents: number;
+  originalPriceCents: number | null;
+  discountPercent: number;
+  thumbnail: string;
+  permalink: string;
+  installmentsNoInterest: boolean;
+}
+
+/** Composer form fields sent to preview / submit. */
+export interface ManualFields {
+  store: string;
+  title: string;
+  priceCents: number;
+  originalPriceCents?: number;
+  installmentsNoInterest?: boolean;
+  coupon?: ManualCoupon;
+  thumbnail: string;
+  permalink?: string;
+}
+
 export interface CalibrationStats {
   periodDays: number;
   approved: number;
