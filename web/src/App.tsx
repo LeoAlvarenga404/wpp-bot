@@ -12,6 +12,7 @@ import {
 import { DealCard } from './components/DealCard';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ConfigPanel } from './components/ConfigPanel';
+import { ManualComposer } from './components/ManualComposer';
 import type { ApproveOptions, PendingDeal } from './types';
 
 const POLL_MS = 20_000;
@@ -19,7 +20,9 @@ const POLL_MS = 20_000;
 type Status = 'loading' | 'ready' | 'unauthorized' | 'error';
 
 export default function App() {
-  const [tab, setTab] = useState<'pending' | 'history' | 'config'>('pending');
+  const [tab, setTab] = useState<
+    'pending' | 'compose' | 'history' | 'config'
+  >('pending');
   const [deals, setDeals] = useState<PendingDeal[]>([]);
   const [status, setStatus] = useState<Status>('loading');
   const [toast, setToast] = useState<string | null>(null);
@@ -115,13 +118,23 @@ export default function App() {
   return (
     <div className="min-h-dvh bg-stone-950 text-stone-100">
       <header className="sticky top-0 z-10 border-b border-stone-800 bg-stone-950/95 px-4 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-md items-center justify-between">
+        <div
+          className={`mx-auto flex items-center justify-between ${
+            tab === 'compose' ? 'max-w-3xl' : 'max-w-md'
+          }`}
+        >
           <div className="flex gap-4">
             <button
               className={`text-lg font-bold ${tab === 'pending' ? 'text-stone-100' : 'text-stone-500'}`}
               onClick={() => setTab('pending')}
             >
               Fila
+            </button>
+            <button
+              className={`text-lg font-bold ${tab === 'compose' ? 'text-stone-100' : 'text-stone-500'}`}
+              onClick={() => setTab('compose')}
+            >
+              Novo deal
             </button>
             <button
               className={`text-lg font-bold ${tab === 'history' ? 'text-stone-100' : 'text-stone-500'}`}
@@ -144,8 +157,20 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-md flex-col gap-4 px-3 py-4 pb-10">
-        {tab === 'history' ? (
+      <main
+        className={`mx-auto flex flex-col gap-4 px-3 py-4 pb-10 ${
+          tab === 'compose' ? 'max-w-3xl' : 'max-w-md'
+        }`}
+      >
+        {tab === 'compose' ? (
+          <ManualComposer
+            onUnauthorized={() => setStatus('unauthorized')}
+            onDone={(msg) => {
+              showToast(msg);
+              void refresh();
+            }}
+          />
+        ) : tab === 'history' ? (
           <HistoryPanel onUnauthorized={() => setStatus('unauthorized')} />
         ) : tab === 'config' ? (
           <ConfigPanel onUnauthorized={() => setStatus('unauthorized')} />
