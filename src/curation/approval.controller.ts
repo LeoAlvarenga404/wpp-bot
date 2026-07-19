@@ -3,7 +3,8 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 import { ApprovalQueueService } from './approval-queue.service';
 import { ApproveDealDto } from './dto/approve-deal.dto';
 import { ResolveManualDto } from './dto/resolve-manual.dto';
-import { CreateGenericManualDto } from './dto/create-generic-manual.dto';
+import { CreateManualDealDto } from './dto/create-manual-deal.dto';
+import { PreviewManualDto } from './dto/preview-manual.dto';
 import { ManualDealService } from './manual/manual-deal.service';
 
 @Controller('approval')
@@ -20,21 +21,24 @@ export class ApprovalController {
   }
 
   /**
-   * Deal manual (issue #8): paste a product URL, get a filled pending card.
-   * A resolve failure returns a clear 4xx and creates no card.
+   * Composer resolve: paste a product URL → prefill fields (no card created).
+   * A resolve failure returns a clear 4xx.
    */
   @Post('manual/resolve')
   async resolveManual(@Body() body: ResolveManualDto) {
     return this.manualDeals.resolveUrl(body.url);
   }
 
-  /**
-   * Deal manual genérico (issue #9): submit a fully populated deal via form
-   * bypassing the scraper resolvers.
-   */
-  @Post('manual/generic')
-  async createGeneric(@Body() body: CreateGenericManualDto) {
-    return this.manualDeals.createGeneric(body);
+  /** Live caption preview for the composer — renders, never decides. */
+  @Post('manual/preview')
+  async previewManual(@Body() body: PreviewManualDto) {
+    return this.manualDeals.preview(body);
+  }
+
+  /** Submit a composed deal: queue, or dispatch=true to send now (urgent). */
+  @Post('manual')
+  async submitManual(@Body() body: CreateManualDealDto) {
+    return this.manualDeals.submit(body);
   }
 
   @Post(':id/approve')

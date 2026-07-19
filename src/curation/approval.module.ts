@@ -16,6 +16,10 @@ import { CurationModule } from './curation.module';
 import { ManualDealService } from './manual/manual-deal.service';
 import { MANUAL_RESOLVERS } from './manual/manual-resolver.port';
 import { MlManualResolver } from './manual/ml-manual-resolver';
+import {
+  HttpShortUrlExpander,
+  SHORT_URL_EXPANDER,
+} from './manual/url-expander';
 import { DmAlertService } from './dm-alert.service';
 
 /**
@@ -40,6 +44,7 @@ import { DmAlertService } from './dm-alert.service';
     PrismaApprovalQueueRepo,
     { provide: APPROVAL_QUEUE_REPO, useExisting: PrismaApprovalQueueRepo },
     ApprovalQueueService,
+    { provide: SHORT_URL_EXPANDER, useFactory: () => new HttpShortUrlExpander() },
     MlManualResolver,
     {
       provide: MANUAL_RESOLVERS,
