@@ -1,0 +1,32 @@
+# Production override for a public VPS.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What it changes vs the dev compose:
+#   - NODE_ENV=production (the app REFUSES to boot without a strong API_KEY).
+#   - Postgres/Redis are NOT published to the internet — the app reaches them
+#     over the internal compose network. They bind to 127.0.0.1 only, so
+#     host-side pg_dump / redis-cli still work for backups/debug.
+#   - The HTTP API binds to 127.0.0.1:3000 — put Caddy/Nginx in front for TLS
+#     and let the reverse proxy forward the x-api-key header. Never expose the
+#     app port straight to 0.0.0.0 on a public box.
+#
+# Everything else (image, Chromium, entrypoint migrate, restart policy, the
+# ./auth_info + ./data + ./config bind mounts) comes from docker-compose.yml.
+
+services:
+  app:
+    environment:
+      NODE_ENV: production
+      # API_KEY comes from .env — set a strong 32+ char random value there.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
