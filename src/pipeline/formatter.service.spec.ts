@@ -241,6 +241,9 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
         discountLabel: '-R$ 20',
         minCents: null,
         validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 8000,
+        capCents: null,
       },
     );
     expect(caption).toContain('🎟️ Com o cupom ABC: R$ 80  (-R$ 20)');

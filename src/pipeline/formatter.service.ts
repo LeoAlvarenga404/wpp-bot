@@ -76,7 +76,7 @@ export class FormatterService {
     _trustBadge?: TrustBadge,
     priceView?: PriceView,
     couponView?: CouponView,
-  ): Promise<{ caption: string; imageUrl: string }> {
+  ): Promise<{ caption: string; imageUrl: string; linkUrl: string }> {
     const raw = scored.deal.raw;
     const link = await this.resolveLink(raw);
     const caption = ofertasTemplate({
@@ -86,7 +86,7 @@ export class FormatterService {
       couponView,
     });
     const imageUrl = toHiResImage(raw.thumbnail || '');
-    return { caption, imageUrl };
+    return { caption, imageUrl, linkUrl: link };
   }
 
   /**

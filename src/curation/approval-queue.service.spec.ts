@@ -549,6 +549,9 @@ describe('ApprovalQueueService.preview', () => {
         discountLabel: '-R$ 5',
         minCents: null,
         validUntil: '2027-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 9500,
+        capCents: null,
       },
     });
     const svc = makeService(d);
@@ -699,6 +702,9 @@ describe('ApprovalQueueService.listPending', () => {
         discountLabel: '-R$ 10',
         minCents: null,
         validUntil: '2027-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 9000,
+        capCents: null,
       },
     });
     const svc = makeService(d);

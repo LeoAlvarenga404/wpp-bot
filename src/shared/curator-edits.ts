@@ -67,5 +67,10 @@ export function couponViewFromCuratorEdit(
     discountLabel: beatsPromo ? reaisLabel(promoCents - final) : '',
     minCents: null,
     validUntil: new Date(now.getTime() + EDITED_COUPON_TTL_MS).toISOString(),
+    // A curator-entered final is an absolute informed price → FINAL semantics
+    // (the renderer never recomputes it over the promo).
+    type: 'FINAL',
+    value: final ?? 0,
+    capCents: null,
   };
 }

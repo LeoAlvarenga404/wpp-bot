@@ -285,7 +285,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
     }
     couponView = this.effectiveCouponView(scored, couponView);
 
-    const { caption, imageUrl } = await this.formatter.formatScored(
+    const { caption, imageUrl, linkUrl } = await this.formatter.formatScored(
       scored,
       variant,
       job.data.trustBadge,
@@ -293,7 +293,7 @@ export class SendDealWorker implements OnModuleInit, OnModuleDestroy {
       couponView,
     );
     if (channel === 'wa') await this.waJitter(job.data.urgent === true);
-    await publisher.publish({ caption, imageUrl }, targetJid);
+    await publisher.publish({ caption, imageUrl, linkUrl }, targetJid);
     if (channel === 'wa') this.lastWaPublishAt = this.now();
 
     await this.dedup.markPosted(keyStr);

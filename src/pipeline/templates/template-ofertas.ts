@@ -11,6 +11,7 @@ import type { ScoredDeal } from '../../deal-score/types';
 import type { SourceId } from '../../sources/source.port';
 import type { PriceView } from '../../pricing/price-view';
 import type { CouponView } from '../../coupon/coupon.types';
+import { couponFinalOver, reaisLabel } from '../../coupon/coupon-math';
 
 export interface OfertasTemplateInput {
   sd: ScoredDeal;
@@ -78,21 +79,28 @@ function priceBlock(
 }
 
 /**
- * Coupon line. `finalCents` is computed off the à-vista price (coupon and Pix
- * discounts don't reliably stack on ML), so the "com cupom" price only prints
- * when it actually beats the promo price shown above — otherwise fall back to
- * the code-only line and let checkout do the math.
- *   🎟️ Com o cupom SHOW10: R$ 706  (-R$ 80)   (PRICE, final beats promo)
- *   🎟️ Cupom SHOW10 em compras acima de R$ 200 (CTA, deal below the minimum)
+ * Coupon line. The coupon stacks on the promo (PIX) price shown above, so the
+ * "com cupom" final is recomputed against `promoCents` at render time —
+ * PERCENT/FIXED subtract from it, FINAL is the curator's absolute price. The
+ * price prints whenever it beats the promo; otherwise a code-only line.
+ *   🎟️ Com o cupom SHOW10: R$ 79  (-10%)       (PERCENT over PIX)
+ *   🎟️ Com o cupom SHOW10: R$ 706  (-R$ 80)    (FIXED / FINAL)
+ *   🎟️ Cupom SHOW10 em compras acima de R$ 200 (CTA, below the minimum)
  *   🎟️ Use o cupom: SHOW10                     (fallback)
  */
 function couponLine(view: CouponView, promoCents: number): string {
-  if (
-    view.mode === 'PRICE' &&
-    view.finalCents != null &&
-    view.finalCents < promoCents
-  ) {
-    return `🎟️ Com o cupom ${view.code}: ${priceIntBRL(view.finalCents)}  (${view.discountLabel})`;
+  if (view.mode === 'PRICE') {
+    const final = couponFinalOver(promoCents, view);
+    if (final < promoCents) {
+      // PERCENT "-15%" / FIXED "-R$ 20" are base-independent; FINAL's implied
+      // discount depends on the promo it beats, so recompute it.
+      const off =
+        view.type === 'FINAL'
+          ? reaisLabel(promoCents - final)
+          : view.discountLabel;
+      return `🎟️ Com o cupom ${view.code}: ${priceIntBRL(final)}  (${off})`;
+    }
+    return `🎟️ Use o cupom: ${view.code}`;
   }
   if (view.mode === 'CTA' && view.minCents != null) {
     return `🎟️ Cupom ${view.code} em compras acima de ${priceIntBRL(view.minCents)}`;

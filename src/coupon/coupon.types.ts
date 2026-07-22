@@ -35,4 +35,15 @@ export interface CouponView {
   minCents: number | null;
   /** ISO date for "válido até". */
   validUntil: string;
+  /**
+   * Discount params carried through to the renderer so it can recompute the
+   * final over the *displayed* promo price — the coupon stacks on the PIX
+   * price shown in the caption, not the à-vista price used at resolution.
+   * FINAL is an absolute informed price and is never recomputed.
+   */
+  type: CouponType;
+  /** PERCENT: whole percent. FIXED: cents off. FINAL: absolute final cents. */
+  value: number;
+  /** PERCENT only: max discount in cents. null = uncapped. */
+  capCents: number | null;
 }
