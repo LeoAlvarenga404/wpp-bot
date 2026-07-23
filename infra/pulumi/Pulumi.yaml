@@ -1,0 +1,36 @@
+name: wpp-bot-infra
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+description: >
+  AWS Lightsail single-box host for wpp-bot (Nest API + SPA + worker + Baileys +
+  Playwright + Postgres + Redis via docker-compose). Provisions the instance,
+  static IP and SSH-only firewall + a bootstrap that installs Docker, swap and
+  clones the repo. Secrets/.env, the Baileys QR scan and the Playwright
+  storage-state copy stay manual (see docs/deploy/lightsail.md) — a headed login
+  and a QR scan cannot be provisioned.
+
+config:
+  wpp-bot-infra:region:
+    description: AWS region (Lightsail). São Paulo by default.
+    default: sa-east-1
+  wpp-bot-infra:availabilityZone:
+    description: Lightsail AZ (must be inside region).
+    default: sa-east-1a
+  wpp-bot-infra:bundleId:
+    description: >
+      Lightsail plan. small_2_0 = 2GB/2vCPU (~$12/mo, the sized-from-measurement
+      choice). Bump to medium_2_0 (4GB) if Chromium OOMs.
+    default: small_2_0
+  wpp-bot-infra:blueprintId:
+    description: OS image.
+    default: ubuntu_22_04
+  wpp-bot-infra:repoUrl:
+    description: Git repo the bootstrap clones.
+    default: https://github.com/LeoAlvarenga404/wpp-bot.git
+  wpp-bot-infra:sshKeyName:
+    description: >
+      Existing Lightsail key-pair name to attach. Leave empty to use the
+      region's default Lightsail key pair.
+    default: ""
