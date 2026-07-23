@@ -15,7 +15,7 @@ const sshKeyName = cfg.get('sshKeyName') ?? '';
 
 // Pin the AWS provider to the chosen region so Lightsail lands in São Paulo
 // regardless of the ambient AWS_REGION.
-const provider = new aws.Provider('aws', { region });
+const provider = new aws.Provider('aws', { region: region as aws.Region });
 const opts = { provider };
 
 // --- bootstrap ---------------------------------------------------------------
@@ -127,7 +127,7 @@ if (hostname) {
   const tunnel = new cloudflare.ZeroTrustTunnelCloudflared('wpp-bot-tunnel', {
     accountId,
     name: 'wpp-bot',
-    tunnelSecret: tunnelSecret.base64,
+    secret: tunnelSecret.base64,
     configSrc: 'cloudflare',
   });
 
@@ -150,10 +150,8 @@ if (hostname) {
     proxied: true,
   });
 
-  // Token cloudflared uses to run the tunnel. Secret output.
-  tunnelToken = cloudflare
-    .getZeroTrustTunnelCloudflaredTokenOutput({ accountId, tunnelId: tunnel.id })
-    .apply((t) => t.token);
+  // Token cloudflared uses to run the tunnel — exposed on the resource.
+  tunnelToken = tunnel.tunnelToken;
 }
 
 // --- outputs -----------------------------------------------------------------
