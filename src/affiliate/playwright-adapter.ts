@@ -476,6 +476,12 @@ export class PlaywrightAffiliateAdapter
       args: [
         '--disable-blink-features=AutomationControlled',
         '--disable-features=IsolateOrigins,site-per-process',
+        // Low-memory flags for a small (2GB) production box: Chromium's default
+        // /dev/shm is tiny inside a container and it crashes under it; route
+        // shared memory to /tmp instead. --disable-gpu drops the unused GPU
+        // stack on a headless server.
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
       ],
     });
     this.context = await this.browser.newContext({
