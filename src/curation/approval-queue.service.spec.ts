@@ -520,7 +520,7 @@ describe('ApprovalQueueService.preview', () => {
     });
 
     expect(out.caption).toContain('➡️ FONE JBL TOP');
-    expect(out.caption).toContain('✅ Por R$ 84 à vista  (-58%)');
+    expect(out.caption).toContain('✅ Por R$ 84 no PIX  (-58%)');
     expect(out.caption).toContain('🎟️ Com o cupom SHOW10: R$ 80  (-R$ 4)');
     expect(out.imageUrl).toBe('https://img/MLB2.jpg');
     // Pure preview: nothing decided, nothing enqueued, nothing audited.
@@ -665,11 +665,11 @@ describe('ApprovalQueueService.listPending', () => {
     const [pending] = await svc.listPending();
 
     // Same lines ofertasTemplate produces at send time: CAPS title, struck
-    // "De", green "Por ... à vista" with % off, link on the raw permalink
+    // "De", green "Por ... no PIX" with % off, link on the raw permalink
     // (preview never mints affiliate/short links).
     expect(pending.caption).toContain('➡️ PRODUTO MLB2');
     expect(pending.caption).toContain('❌ De ~R$ 200~');
-    expect(pending.caption).toContain('✅ Por R$ 100 à vista  (-50%)');
+    expect(pending.caption).toContain('✅ Por R$ 100 no PIX  (-50%)');
     expect(pending.caption).toContain('🛒 Link: https://ml/MLB2');
     expect(pending.imageUrl).toBe('https://img/MLB2.jpg');
   });

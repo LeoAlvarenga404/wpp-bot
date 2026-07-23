@@ -2,7 +2,7 @@
 //
 // Single flat caption format cloning the reference deals group style:
 // uppercased title, ML FULL badge, then a structured price block — struck
-// "De" (full price), green "Por" (promo price, tagged PIX or à-vista) with
+// "De" (full price), green "Por" (promo price, always tagged "no PIX") with
 // the % off, the no-interest card installment line and the coupon line
 // (final "com cupom" price when it beats the promo) — then the link.
 // No hashtag, no AI headline, no affiliate disclaimer.
@@ -33,8 +33,8 @@ function priceIntBRL(cents: number): string {
  * Structured price block. Reads the scraped {@link PriceView} when present,
  * falling back to the API price on the deal. Produces up to three lines:
  *   ❌ De ~R$ 200~            (full price, struck — only when it beats the promo)
- *   ✅ Por R$ 87 no PIX  (-56%)  (promo price, tagged PIX or à vista, with % off)
- *   💳 ou 10x de R$ 9 sem juros  (no-interest card installments, when scraped)
+ *   ✅ Por R$ 87 no PIX  (-56%)  (promo price, always tagged "no PIX", with % off)
+ *   💳 ou 10x de R$ 9 sem juros  (only when scraped installments are interest-free)
  */
 function priceBlock(
   sd: ScoredDeal,
@@ -46,7 +46,11 @@ function priceBlock(
   const pix = priceView?.pixPriceCents ?? null;
   const avista = priceView?.priceCents ?? raw.priceCents;
   const promoCents = pix ?? avista;
-  const promoLabel = pix != null ? 'no PIX' : 'à vista';
+  // Always tag the promo "no PIX": the composer field is the PIX price and the
+  // ML page's headline number is the PIX/à-vista price anyway, so the group
+  // reads one consistent label instead of flip-flopping on whether a distinct
+  // pixPriceCents was scraped.
+  const promoLabel = 'no PIX';
 
   const originalCents =
     priceView?.originalPriceCents ?? raw.originalPriceCents ?? null;
@@ -67,12 +71,12 @@ function priceBlock(
   const off = discount && discount > 0 ? `  (-${discount}%)` : '';
   lines.push(`✅ Por ${priceIntBRL(promoCents)} ${promoLabel}${off}`);
 
+  // Only advertise installments when they are interest-free — an
+  // interest-bearing "Nx de R$Y" reads as more expensive and is never a
+  // selling point.
   const inst = priceView?.installments ?? null;
-  if (inst && inst.count > 1) {
-    const juros = inst.noInterest ? ' sem juros' : '';
-    lines.push(
-      `💳 ou ${inst.count}x de ${priceIntBRL(inst.amountCents)}${juros}`,
-    );
+  if (inst && inst.count > 1 && inst.noInterest) {
+    lines.push(`💳 ou ${inst.count}x de ${priceIntBRL(inst.amountCents)} sem juros`);
   }
 
   return { lines, promoCents };

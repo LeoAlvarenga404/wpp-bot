@@ -63,7 +63,7 @@ describe('ofertasTemplate', () => {
     expect(lines[0]).toBe('➡️ ECHO DOT 5');
     expect(out).not.toContain('#MercadoLivre');
     expect(out).toContain('❌ De ~R$ 200~');
-    expect(out).toContain('✅ Por R$ 87 à vista');
+    expect(out).toContain('✅ Por R$ 87 no PIX');
     expect(out).toContain('🛒 Link: https://meli.la/ABC');
     expect(out).not.toMatch(/Link de afiliado/);
   });
@@ -259,6 +259,6 @@ describe('ofertasTemplate', () => {
       sd: makeScored({ priceCents: 484699 }),
       link: 'l',
     });
-    expect(out).toContain('✅ Por R$ 4.846 à vista');
+    expect(out).toContain('✅ Por R$ 4.846 no PIX');
   });
 });
