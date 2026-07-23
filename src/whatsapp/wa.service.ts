@@ -9,6 +9,7 @@ import { Boom } from '@hapi/boom';
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  prepareWAMessageMedia,
   useMultiFileAuthState,
   WASocket,
 } from '@whiskeysockets/baileys';
@@ -262,23 +263,40 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
     const thumbnail = await this.fetchThumbnail(opts.imageUrl);
     const host = this.hostLabel(opts.sourceUrl);
 
+    // Standard link preview (extendedTextMessage), NOT externalAdReply: the
+    // "ad reply" card is silently dropped in groups for unofficial (Baileys)
+    // senders — WhatsApp filters it as ad spam. A manual linkPreview delivers
+    // reliably, is clickable, and shows our own product thumbnail. We pass the
+    // object explicitly so Baileys skips its auto-generator (the optional
+    // `link-preview-js` package is absent here). The sourceUrl must appear in
+    // the caption text for WhatsApp to link it — the template's 🛒 line does.
+    //
+    // For the LARGE preview image (not the tiny inline thumb) we upload the
+    // image as a thumbnail-link media and attach it as highQualityThumbnail —
+    // this is what Baileys' generateHighQualityLinkPreview does internally.
+    const hq = thumbnail
+      ? await this.uploadLinkThumbnail(thumbnail)
+      : undefined;
+
     await this.sock.sendMessage(jid, {
       text: opts.caption,
-      contextInfo: {
-        externalAdReply: {
-          title: host,
-          mediaType: 1,
-          sourceUrl: opts.sourceUrl,
-          renderLargerThumbnail: true,
-          showAdAttribution: false,
-          ...(thumbnail ? { thumbnail } : { thumbnailUrl: opts.imageUrl }),
-        },
+      linkPreview: {
+        'canonical-url': opts.sourceUrl,
+        'matched-text': opts.sourceUrl,
+        title: host,
+        description: '',
+        jpegThumbnail: hq?.jpegThumbnail
+          ? Buffer.from(hq.jpegThumbnail)
+          : thumbnail,
+        highQualityThumbnail: hq,
       },
     });
     await this.rateLimiter.recordSend();
   }
 
-  /** Fetch an image into a Buffer for use as an externalAdReply thumbnail.
+  /** Fetch an image and compress it to a small JPEG for use as an
+   * externalAdReply thumbnail. A full-res buffer here makes WhatsApp silently
+   * drop the whole message, so we downscale to <=600px / q70 (tens of KB).
    * Returns undefined on any failure (caller falls back to thumbnailUrl). */
   private async fetchThumbnail(url: string): Promise<Buffer | undefined> {
     try {
@@ -287,10 +305,50 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`link-card thumbnail fetch ${res.status} for ${url}`);
         return undefined;
       }
-      return Buffer.from(await res.arrayBuffer());
+      const raw = Buffer.from(await res.arrayBuffer());
+      return await this.compressThumb(raw);
     } catch (err) {
       this.logger.warn(
         `link-card thumbnail fetch failed (${(err as Error).message}); using thumbnailUrl`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Downscale to a card-sized JPEG via sharp (bundled with Baileys). Falls
+   * back to the raw buffer if sharp is unavailable. */
+  private async compressThumb(raw: Buffer): Promise<Buffer> {
+    try {
+      const sharp = (await import('sharp')).default;
+      return await sharp(raw)
+        .resize({ width: 600, height: 600, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 70 })
+        .toBuffer();
+    } catch (err) {
+      this.logger.warn(
+        `link-card thumbnail compress failed (${(err as Error).message}); using raw buffer`,
+      );
+      return raw;
+    }
+  }
+
+  /** Upload the thumbnail as a `thumbnail-link` media so the link preview
+   * renders as a LARGE image (high-quality preview) instead of a tiny inline
+   * thumb. Returns the imageMessage to attach as `highQualityThumbnail`, or
+   * undefined on failure (caller degrades to the small jpegThumbnail). */
+  private async uploadLinkThumbnail(buffer: Buffer) {
+    try {
+      const media = await prepareWAMessageMedia(
+        { image: buffer },
+        {
+          upload: this.sock!.waUploadToServer,
+          mediaTypeOverride: 'thumbnail-link',
+        },
+      );
+      return media.imageMessage ?? undefined;
+    } catch (err) {
+      this.logger.warn(
+        `link-card HQ thumbnail upload failed (${(err as Error).message}); using inline thumb`,
       );
       return undefined;
     }
