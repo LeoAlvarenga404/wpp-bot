@@ -261,9 +261,11 @@ describe('ApprovalQueueService.approve', () => {
 
     const result = await svc.approve(id);
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
     expect(result.enqueued).toBe(1);
     expect(d.repo.rows[0].status).toBe('APPROVED');
     expect(d.repo.rows[0].decidedAt).toEqual(svc.nowValue);
@@ -392,9 +394,11 @@ describe('ApprovalQueueService.approve with edits', () => {
 
     await svc.approve(d.repo.rows[0].id, {});
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
   });
 
   it('records the edits in the decision audit and on the pending row', async () => {
@@ -486,7 +490,7 @@ describe('ApprovalQueueService.approve urgent + dedup override (issue #7)', () =
     ).toBeUndefined();
   });
 
-  it('plain approve stays exactly as before (no opts, no extra audit rows)', async () => {
+  it('plain approve enqueues trusted (no urgent/override, no extra audit rows)', async () => {
     const d = makeDeps({ threshold: '90' });
     const svc = makeService(d);
     const sd = makeScored('MLB2', 80);
@@ -494,9 +498,11 @@ describe('ApprovalQueueService.approve urgent + dedup override (issue #7)', () =
 
     await svc.approve(d.repo.rows[0].id);
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
     expect(d.decisions.upserts.map((u) => u.stage)).toEqual(['approval']);
   });
 });

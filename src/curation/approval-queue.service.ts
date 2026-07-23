@@ -227,13 +227,19 @@ export class ApprovalQueueService {
 
     const urgent = opts?.urgent === true;
     const overridden = postedDaysAgo != null && opts?.dedupOverride === true;
+    // Every approval-queue dispatch is human-curated: skip the LLM judge in
+    // the gate so a deal the curator explicitly approved (manual composer,
+    // borderline card, "enviar agora") is never silently vetoed by the judge.
     const result =
       urgent || overridden
         ? await this.pipeline.enqueueScored([sd], undefined, {
             urgent,
             uniqueJobId: true,
+            trusted: true,
           })
-        : await this.pipeline.enqueueScored([sd]);
+        : await this.pipeline.enqueueScored([sd], undefined, {
+            trusted: true,
+          });
 
     await this.repo.markDecided(row.id, 'APPROVED', this.now(), applied);
     await this.audit(row, 'approved', applied);

@@ -49,6 +49,12 @@ export interface EnqueueOptions {
    * sends and curator dedup overrides (human said "send", so send).
    */
   uniqueJobId?: boolean;
+  /**
+   * Human-curated dispatch (approval panel / manual composer). Skips the LLM
+   * judge in the dispatch gate — the curator already decided, so a fresh
+   * (no-history) or borderline deal must not be silently vetoed by the judge.
+   */
+  trusted?: boolean;
 }
 
 @Injectable()
@@ -275,6 +281,7 @@ export class PipelineService {
     const selected = await this.gate.selectForDispatch(
       scored,
       Math.max(waCap, tgCap),
+      { trusted: opts?.trusted === true },
     );
     if (selected.length === 0) {
       return { enqueued: 0, targets: 0, topScore: null };
@@ -337,6 +344,14 @@ export class PipelineService {
         // human (approval panel) — it beats the scraper. Skip the scrape so
         // no PriceView overrides the edited value downstream.
         if (sd.curatorEdits?.priceCents != null) continue;
+        // A manual deal (composer) carries prices the curator typed straight
+        // off the page — authoritative, same as an edit. Skipping the scrape
+        // keeps the sent message identical to the composer preview; otherwise
+        // a garbage scrape (wrong à-vista, phantom installments) overrode the
+        // human-entered PIX price.
+        if ((sd.deal.extras as { manual?: boolean } | undefined)?.manual) {
+          continue;
+        }
         try {
           scrapeResults[i] = await this.priceScraper.scrapePriceView(
             sd.deal.raw.permalink,

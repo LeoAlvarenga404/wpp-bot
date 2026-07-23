@@ -245,6 +245,33 @@ describe('CurationGateService.selectForDispatch', () => {
     });
   });
 
+  it('trusted dispatch skips the judge for a no-history gray-zone deal', async () => {
+    const d = makeDeps();
+    d.curation.historyDays.mockReturnValue(0); // manual deal: zero history
+    const gate = makeGate(d);
+
+    const out = await gate.selectForDispatch([makeScored('MLB1', 80)], 3, {
+      trusted: true,
+    });
+
+    expect(out).toHaveLength(1);
+    expect(d.judge.judge).not.toHaveBeenCalled();
+  });
+
+  it('trusted dispatch still hard-blocks price-raise', async () => {
+    const d = makeDeps();
+    const gate = makeGate(d);
+
+    const out = await gate.selectForDispatch(
+      [makeScored('MLB1', 80, { price_raise_before_discount: -30 })],
+      3,
+      { trusted: true },
+    );
+
+    expect(out).toHaveLength(0);
+    expect(d.decisions.upserts[0]).toMatchObject({ stage: 'price_raise' });
+  });
+
   it('fail-closed on judge error', async () => {
     const d = makeDeps();
     d.judge.judge.mockRejectedValue(new Error('timeout'));

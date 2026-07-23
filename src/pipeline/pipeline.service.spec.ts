@@ -456,6 +456,7 @@ describe('PipelineService.enqueueScored', () => {
     expect(d.gate.selectForDispatch).toHaveBeenCalledWith(
       expect.anything(),
       3, // max(waCap=1, tgCap=3)
+      { trusted: false }, // scheduler path is untrusted → judge still runs
     );
   });
 
@@ -730,6 +731,33 @@ describe('PipelineService.enqueueScored', () => {
       expect(byKey.get('ml:MLB1').priceView).toBeUndefined();
       expect(byKey.get('ml:MLB1').scored.deal.raw.priceCents).toBe(8400);
       expect(byKey.get('ml:MLB2').priceView.priceCents).toBe(2000);
+    });
+
+    it('skips the scrape for a manual deal — the composer-entered price wins', async () => {
+      const d = setup('2');
+      const scraper = {
+        scrapePriceView: jest.fn(async (permalink: string) => {
+          const id = Number(permalink.slice('https://ml/MLB'.length));
+          return priceViewFor(1000 * id);
+        }),
+      };
+      (d.pipeline as any).priceScraper = scraper;
+      const manual = scoredWithPermalink('MLB1', 100);
+      manual.deal.raw.priceCents = 21200; // typed off the page by the curator
+      manual.deal.extras = { manual: true };
+      const pipelineDeal = scoredWithPermalink('MLB2', 85);
+
+      await d.pipeline.enqueueScored([manual, pipelineDeal]);
+
+      // Only the pipeline deal is scraped; the manual one keeps 21200 and
+      // carries no PriceView (so the caption renders exactly the composer
+      // preview, not a scraped à-vista / phantom installments).
+      expect(scraper.scrapePriceView).toHaveBeenCalledTimes(1);
+      expect(scraper.scrapePriceView).toHaveBeenCalledWith('https://ml/MLB2');
+      const calls = (d.sendQueue.add as jest.Mock).mock.calls;
+      const byKey = new Map(calls.map(([, data]) => [data.catalogKey, data]));
+      expect(byKey.get('ml:MLB1').priceView).toBeUndefined();
+      expect(byKey.get('ml:MLB1').scored.deal.raw.priceCents).toBe(21200);
     });
 
     it('uses the curator-edited coupon instead of the resolver', async () => {
