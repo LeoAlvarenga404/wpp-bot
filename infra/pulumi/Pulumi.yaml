@@ -34,3 +34,18 @@ config:
       Existing Lightsail key-pair name to attach. Leave empty to use the
       region's default Lightsail key pair.
     default: ""
+  wpp-bot-infra:sshCidr:
+    description: CIDR allowed to SSH. Tighten to your IP (e.g. 203.0.113.4/32).
+    default: 0.0.0.0/0
+  wpp-bot-infra:hostname:
+    description: >
+      Public hostname for the panel (e.g. painel.seudominio.com). Set it to
+      provision the Cloudflare Tunnel + DNS; leave unset for AWS-only. Requires
+      CLOUDFLARE_API_TOKEN in the env plus the account/zone ids below.
+    default: ""
+  wpp-bot-infra:cloudflareAccountId:
+    description: Cloudflare account id (needed when hostname is set).
+    default: ""
+  wpp-bot-infra:cloudflareZoneId:
+    description: Cloudflare zone id of the domain (needed when hostname is set).
+    default: ""

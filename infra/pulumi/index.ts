@@ -1,5 +1,7 @@
 import * as pulumi from '@pulumi/pulumi';
 import * as aws from '@pulumi/aws';
+import * as cloudflare from '@pulumi/cloudflare';
+import * as random from '@pulumi/random';
 
 // --- config -----------------------------------------------------------------
 const cfg = new pulumi.Config();
@@ -98,7 +100,69 @@ new aws.lightsail.InstancePublicPorts(
   opts,
 );
 
+// --- Cloudflare Tunnel + DNS (optional) -------------------------------------
+// Enabled only when `hostname` is set. Creates a remotely-managed tunnel, its
+// ingress config (hostname -> the app on localhost:3000) and the DNS CNAME.
+// Requires CLOUDFLARE_API_TOKEN in the environment plus the account/zone ids.
+//
+// Access (the auth gate in front of the hostname) is intentionally left to the
+// Zero Trust dashboard: its Pulumi resource shapes shift a lot between provider
+// majors, and a dashboard app+policy is a 2-minute, low-risk step (Fase 5 do
+// runbook). Validate this block with `pulumi preview` — targets
+// pulumi-cloudflare v5.
+//
+// The operator installs cloudflared on the box with the emitted token:
+//   sudo cloudflared service install <tunnelToken>
+const hostname = cfg.get('hostname');
+let tunnelToken: pulumi.Output<string> | undefined;
+
+if (hostname) {
+  const accountId = cfg.require('cloudflareAccountId');
+  const zoneId = cfg.require('cloudflareZoneId');
+
+  const tunnelSecret = new random.RandomBytes('wpp-bot-tunnel-secret', {
+    length: 32,
+  });
+
+  const tunnel = new cloudflare.ZeroTrustTunnelCloudflared('wpp-bot-tunnel', {
+    accountId,
+    name: 'wpp-bot',
+    tunnelSecret: tunnelSecret.base64,
+    configSrc: 'cloudflare',
+  });
+
+  new cloudflare.ZeroTrustTunnelCloudflaredConfig('wpp-bot-tunnel-config', {
+    accountId,
+    tunnelId: tunnel.id,
+    config: {
+      ingressRules: [
+        { hostname, service: 'http://localhost:3000' },
+        { service: 'http_status:404' },
+      ],
+    },
+  });
+
+  new cloudflare.Record('wpp-bot-dns', {
+    zoneId,
+    name: hostname,
+    type: 'CNAME',
+    content: pulumi.interpolate`${tunnel.id}.cfargotunnel.com`,
+    proxied: true,
+  });
+
+  // Token cloudflared uses to run the tunnel. Secret output.
+  tunnelToken = cloudflare
+    .getZeroTrustTunnelCloudflaredTokenOutput({ accountId, tunnelId: tunnel.id })
+    .apply((t) => t.token);
+}
+
 // --- outputs -----------------------------------------------------------------
 export const publicIp = staticIp.ipAddress;
 export const sshCommand = pulumi.interpolate`ssh ubuntu@${staticIp.ipAddress}`;
 export const nextSteps = pulumi.interpolate`ssh in, then: cat ~/NEXT_STEPS.txt`;
+export const panelUrl = hostname ? `https://${hostname}` : undefined;
+// `pulumi stack output tunnelToken --show-secrets` → run on the box:
+//   sudo cloudflared service install <token>
+export const cloudflaredInstallToken = tunnelToken
+  ? pulumi.secret(tunnelToken)
+  : undefined;
