@@ -201,10 +201,10 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
     expect(caption).not.toMatch(/PROMOÇÃO/);
   });
 
-  it('shows à vista when no priceView, no PIX when pixPriceCents present', async () => {
+  it('tags the promo "no PIX" whether or not a distinct pix price was scraped', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const noPix = await svc.formatScored(makeScored('good'));
-    expect(noPix.caption).toContain('✅ Por R$ 100 à vista');
+    expect(noPix.caption).toContain('✅ Por R$ 100 no PIX');
 
     const withPix = await svc.formatScored(makeScored('good'), 'A', undefined, {
       priceCents: 10000,
@@ -230,7 +230,7 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
   it('renders the final "com cupom" price when it beats the promo', async () => {
     const svc = new FormatterService(makeAffiliate(), makeHeadline('h'));
     const { caption } = await svc.formatScored(
-      makeScored('good'), // priceCents 10000, no priceView -> promo à vista
+      makeScored('good'), // priceCents 10000, no priceView -> promo no PIX
       'A',
       undefined,
       undefined,
@@ -241,6 +241,9 @@ describe('FormatterService.formatScored (ofertas clone)', () => {
         discountLabel: '-R$ 20',
         minCents: null,
         validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 8000,
+        capCents: null,
       },
     );
     expect(caption).toContain('🎟️ Com o cupom ABC: R$ 80  (-R$ 20)');

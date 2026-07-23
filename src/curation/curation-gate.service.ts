@@ -130,11 +130,19 @@ export class CurationGateService implements OnModuleInit {
    * approved deals of the same category (deal.raw.feedId) while a different
    * category remains in the pool; when all remaining deals share the previous
    * category, falls back to plain score order.
+   *
+   * `opts.trusted` marks a human-curated dispatch (approval panel: approve,
+   * manual composer, "enviar agora"). The curator IS the authority, so the
+   * LLM judge is skipped for the gray zone — a manual/borderline deal a human
+   * explicitly approved must never be silently vetoed by the judge. The other
+   * hard blocks (price-raise, source warmup) still apply.
    */
   async selectForDispatch(
     scored: ScoredDeal[],
     max: number,
+    opts?: { trusted?: boolean },
   ): Promise<Array<{ scored: ScoredDeal; variant: CopyVariant }>> {
+    const trusted = opts?.trusted === true;
     const pool = [...scored].sort((a, b) => b.score - a.score);
     const approved: Array<{ scored: ScoredDeal; variant: CopyVariant }> = [];
     let judgeCalls = 0;
@@ -180,7 +188,7 @@ export class CurationGateService implements OnModuleInit {
       const noHistory = this.curation.historyDays(keyStr) < this.minHistoryDays;
       const grayZone = noHistory || sd.score < this.scoreTop;
 
-      if (grayZone) {
+      if (grayZone && !trusted) {
         let verdict: JudgeVerdict | null = this.verdictCache.get(
           keyStr,
           priceCents,

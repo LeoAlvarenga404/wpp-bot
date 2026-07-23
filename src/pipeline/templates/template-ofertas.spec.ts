@@ -63,7 +63,7 @@ describe('ofertasTemplate', () => {
     expect(lines[0]).toBe('➡️ ECHO DOT 5');
     expect(out).not.toContain('#MercadoLivre');
     expect(out).toContain('❌ De ~R$ 200~');
-    expect(out).toContain('✅ Por R$ 87 à vista');
+    expect(out).toContain('✅ Por R$ 87 no PIX');
     expect(out).toContain('🛒 Link: https://meli.la/ABC');
     expect(out).not.toMatch(/Link de afiliado/);
   });
@@ -132,29 +132,7 @@ describe('ofertasTemplate', () => {
     expect(noFull).not.toContain('⚡ FULL');
   });
 
-  it('renders the final "com cupom" price when it beats the promo price', () => {
-    const out = ofertasTemplate({
-      sd: makeScored({ priceCents: 8700 }),
-      link: 'l',
-      couponView: {
-        code: 'SHOWNOCAMPO',
-        mode: 'PRICE',
-        finalCents: 8000,
-        discountLabel: '-R$ 20',
-        minCents: null,
-        validUntil: '2999-01-01T00:00:00.000Z',
-      },
-    });
-    const lines = out.split('\n');
-    const couponIdx = lines.findIndex((l) => l.startsWith('🎟️'));
-    const linkIdx = lines.findIndex((l) => l.startsWith('🛒'));
-    expect(lines[couponIdx]).toBe('🎟️ Com o cupom SHOWNOCAMPO: R$ 80  (-R$ 20)');
-    expect(couponIdx).toBeLessThan(linkIdx);
-    expect(lines[couponIdx - 1]).toContain('✅ Por'); // right after price block
-    expect(out).not.toMatch(/válido até/);
-  });
-
-  it('falls back to code-only when the coupon final does not beat the promo (pix lower)', () => {
+  it('stacks a PERCENT coupon on the PIX promo price', () => {
     const out = ofertasTemplate({
       sd: makeScored({ priceCents: 10000 }),
       link: 'l',
@@ -162,17 +140,73 @@ describe('ofertasTemplate', () => {
         priceCents: 10000,
         originalPriceCents: 20000,
         discountPercent: 50,
-        pixPriceCents: 7500, // pix already below the coupon final
+        pixPriceCents: 8800, // promo shown = PIX
+        installments: null,
+        scrapedAt: '2026-07-15T20:00:00.000Z',
+      },
+      couponView: {
+        code: 'LOOKEMDIA',
+        mode: 'PRICE',
+        finalCents: 9000, // resolution-time value (à-vista) — ignored at render
+        discountLabel: '-10%',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'PERCENT',
+        value: 10,
+        capCents: null,
+      },
+    });
+    const lines = out.split('\n');
+    const couponIdx = lines.findIndex((l) => l.startsWith('🎟️'));
+    const linkIdx = lines.findIndex((l) => l.startsWith('🛒'));
+    // 8800 - 10% = 7920 -> floored R$ 79, over the PIX promo not the à-vista.
+    expect(lines[couponIdx]).toBe('🎟️ Com o cupom LOOKEMDIA: R$ 79  (-10%)');
+    expect(couponIdx).toBeLessThan(linkIdx);
+    expect(out).not.toMatch(/válido até/);
+  });
+
+  it('stacks a FIXED coupon on the PIX promo price', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ priceCents: 8700 }),
+      link: 'l',
+      couponView: {
+        code: 'MENOS20',
+        mode: 'PRICE',
+        finalCents: 6700,
+        discountLabel: '-R$ 20',
+        minCents: null,
+        validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'FIXED',
+        value: 2000, // R$ 20 off
+        capCents: null,
+      },
+    });
+    // 8700 - 2000 = 6700 -> R$ 67.
+    expect(out).toContain('🎟️ Com o cupom MENOS20: R$ 67  (-R$ 20)');
+  });
+
+  it('falls back to code-only when a FINAL price does not beat the promo (pix lower)', () => {
+    const out = ofertasTemplate({
+      sd: makeScored({ priceCents: 10000 }),
+      link: 'l',
+      priceView: {
+        priceCents: 10000,
+        originalPriceCents: 20000,
+        discountPercent: 50,
+        pixPriceCents: 7500, // pix already below the informed final
         installments: null,
         scrapedAt: '2026-07-15T20:00:00.000Z',
       },
       couponView: {
         code: 'FRACO',
         mode: 'PRICE',
-        finalCents: 9000, // à vista - coupon, still above the pix promo
+        finalCents: 9000, // absolute informed price, still above the pix promo
         discountLabel: '-R$ 10',
         minCents: null,
         validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 9000,
+        capCents: null,
       },
     });
     expect(out).toContain('🎟️ Use o cupom: FRACO');
@@ -190,6 +224,9 @@ describe('ofertasTemplate', () => {
         discountLabel: '-R$ 30',
         minCents: 20000,
         validUntil: '2999-01-01T00:00:00.000Z',
+        type: 'FIXED',
+        value: 3000,
+        capCents: null,
       },
     });
     expect(out).toContain('🎟️ Cupom ACIMA200 em compras acima de R$ 200');
@@ -222,6 +259,6 @@ describe('ofertasTemplate', () => {
       sd: makeScored({ priceCents: 484699 }),
       link: 'l',
     });
-    expect(out).toContain('✅ Por R$ 4.846 à vista');
+    expect(out).toContain('✅ Por R$ 4.846 no PIX');
   });
 });

@@ -237,4 +237,71 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
     });
     await this.rateLimiter.recordSend();
   }
+
+  /**
+   * Clickable link-preview card (externalAdReply): a large thumbnail plus the
+   * caption text, where tapping anywhere on the card opens `sourceUrl`. Unlike
+   * {@link sendImage} the picture is a preview thumbnail (lower res), not full
+   * media — the trade-off for making the image itself redirect.
+   *
+   * The thumbnail is fetched to a Buffer for reliable rendering across WA
+   * clients; if the fetch fails we still send the card with `thumbnailUrl` so
+   * the message is never lost. If the whole card send throws, the error
+   * propagates (BullMQ retry) — same contract as sendImage.
+   */
+  async sendImageCard(
+    jid: string,
+    opts: { imageUrl: string; caption: string; sourceUrl: string },
+  ): Promise<void> {
+    if (!this.sock || !this.ready) throw new Error('WhatsApp not ready');
+    const check = this.rateLimiter.canSend();
+    if (!check.allowed) {
+      throw new Error(`throttled:${check.reason ?? 'warmup_cap'}`);
+    }
+
+    const thumbnail = await this.fetchThumbnail(opts.imageUrl);
+    const host = this.hostLabel(opts.sourceUrl);
+
+    await this.sock.sendMessage(jid, {
+      text: opts.caption,
+      contextInfo: {
+        externalAdReply: {
+          title: host,
+          mediaType: 1,
+          sourceUrl: opts.sourceUrl,
+          renderLargerThumbnail: true,
+          showAdAttribution: false,
+          ...(thumbnail ? { thumbnail } : { thumbnailUrl: opts.imageUrl }),
+        },
+      },
+    });
+    await this.rateLimiter.recordSend();
+  }
+
+  /** Fetch an image into a Buffer for use as an externalAdReply thumbnail.
+   * Returns undefined on any failure (caller falls back to thumbnailUrl). */
+  private async fetchThumbnail(url: string): Promise<Buffer | undefined> {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        this.logger.warn(`link-card thumbnail fetch ${res.status} for ${url}`);
+        return undefined;
+      }
+      return Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      this.logger.warn(
+        `link-card thumbnail fetch failed (${(err as Error).message}); using thumbnailUrl`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Bare host for the card label: "https://meli.la/x" -> "meli.la". */
+  private hostLabel(url: string): string {
+    try {
+      return new URL(url).host.replace(/^www\./, '');
+    } catch {
+      return 'oferta';
+    }
+  }
 }

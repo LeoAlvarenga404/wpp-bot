@@ -261,9 +261,11 @@ describe('ApprovalQueueService.approve', () => {
 
     const result = await svc.approve(id);
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
     expect(result.enqueued).toBe(1);
     expect(d.repo.rows[0].status).toBe('APPROVED');
     expect(d.repo.rows[0].decidedAt).toEqual(svc.nowValue);
@@ -392,9 +394,11 @@ describe('ApprovalQueueService.approve with edits', () => {
 
     await svc.approve(d.repo.rows[0].id, {});
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
   });
 
   it('records the edits in the decision audit and on the pending row', async () => {
@@ -486,7 +490,7 @@ describe('ApprovalQueueService.approve urgent + dedup override (issue #7)', () =
     ).toBeUndefined();
   });
 
-  it('plain approve stays exactly as before (no opts, no extra audit rows)', async () => {
+  it('plain approve enqueues trusted (no urgent/override, no extra audit rows)', async () => {
     const d = makeDeps({ threshold: '90' });
     const svc = makeService(d);
     const sd = makeScored('MLB2', 80);
@@ -494,9 +498,11 @@ describe('ApprovalQueueService.approve urgent + dedup override (issue #7)', () =
 
     await svc.approve(d.repo.rows[0].id);
 
-    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith([
-      JSON.parse(JSON.stringify(sd)),
-    ]);
+    expect(d.pipeline.enqueueScored).toHaveBeenCalledWith(
+      [JSON.parse(JSON.stringify(sd))],
+      undefined,
+      { trusted: true },
+    );
     expect(d.decisions.upserts.map((u) => u.stage)).toEqual(['approval']);
   });
 });
@@ -514,7 +520,7 @@ describe('ApprovalQueueService.preview', () => {
     });
 
     expect(out.caption).toContain('➡️ FONE JBL TOP');
-    expect(out.caption).toContain('✅ Por R$ 84 à vista  (-58%)');
+    expect(out.caption).toContain('✅ Por R$ 84 no PIX  (-58%)');
     expect(out.caption).toContain('🎟️ Com o cupom SHOW10: R$ 80  (-R$ 4)');
     expect(out.imageUrl).toBe('https://img/MLB2.jpg');
     // Pure preview: nothing decided, nothing enqueued, nothing audited.
@@ -549,6 +555,9 @@ describe('ApprovalQueueService.preview', () => {
         discountLabel: '-R$ 5',
         minCents: null,
         validUntil: '2027-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 9500,
+        capCents: null,
       },
     });
     const svc = makeService(d);
@@ -656,11 +665,11 @@ describe('ApprovalQueueService.listPending', () => {
     const [pending] = await svc.listPending();
 
     // Same lines ofertasTemplate produces at send time: CAPS title, struck
-    // "De", green "Por ... à vista" with % off, link on the raw permalink
+    // "De", green "Por ... no PIX" with % off, link on the raw permalink
     // (preview never mints affiliate/short links).
     expect(pending.caption).toContain('➡️ PRODUTO MLB2');
     expect(pending.caption).toContain('❌ De ~R$ 200~');
-    expect(pending.caption).toContain('✅ Por R$ 100 à vista  (-50%)');
+    expect(pending.caption).toContain('✅ Por R$ 100 no PIX  (-50%)');
     expect(pending.caption).toContain('🛒 Link: https://ml/MLB2');
     expect(pending.imageUrl).toBe('https://img/MLB2.jpg');
   });
@@ -699,6 +708,9 @@ describe('ApprovalQueueService.listPending', () => {
         discountLabel: '-R$ 10',
         minCents: null,
         validUntil: '2027-01-01T00:00:00.000Z',
+        type: 'FINAL',
+        value: 9000,
+        capCents: null,
       },
     });
     const svc = makeService(d);

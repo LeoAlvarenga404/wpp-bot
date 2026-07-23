@@ -16,12 +16,31 @@ export function applyCoupon(priceCents: number, coupon: Coupon): number {
   return Math.max(0, priceCents - discount);
 }
 
-function reaisLabel(cents: number): string {
+export function reaisLabel(cents: number): string {
   const reais = cents / 100;
   const n = Number.isInteger(reais)
     ? String(reais)
     : reais.toFixed(2).replace('.', ',');
   return `-R$ ${n}`;
+}
+
+/**
+ * Final price when the coupon stacks on `baseCents` (the promo/PIX price the
+ * caption actually shows). PERCENT/FIXED subtract from the base; FINAL is an
+ * absolute informed price (clamped to the base so a "coupon" never reads as a
+ * markup). Mirrors {@link applyCoupon} but reads a {@link CouponView}.
+ */
+export function couponFinalOver(baseCents: number, view: CouponView): number {
+  if (view.type === 'FINAL') {
+    return view.finalCents ?? Math.max(0, Math.min(view.value, baseCents));
+  }
+  if (view.type === 'PERCENT') {
+    let discount = Math.round((baseCents * view.value) / 100);
+    if (view.capCents != null) discount = Math.min(discount, view.capCents);
+    return Math.max(0, baseCents - discount);
+  }
+  // FIXED: value is cents off.
+  return Math.max(0, baseCents - view.value);
 }
 
 function discountLabel(coupon: Coupon, priceCents: number): string {
@@ -60,6 +79,9 @@ export function computeCouponView(
       discountLabel: discountLabel(coupon, priceCents),
       minCents: null,
       validUntil: coupon.validUntil.toISOString(),
+      type: coupon.type,
+      value: coupon.value,
+      capCents: coupon.capCents,
     };
   }
 
@@ -75,6 +97,9 @@ export function computeCouponView(
       discountLabel: label,
       minCents: coupon.minCents,
       validUntil,
+      type: coupon.type,
+      value: coupon.value,
+      capCents: coupon.capCents,
     };
   }
   return {
@@ -84,5 +109,8 @@ export function computeCouponView(
     discountLabel: label,
     minCents: coupon.minCents,
     validUntil,
+    type: coupon.type,
+    value: coupon.value,
+    capCents: coupon.capCents,
   };
 }
