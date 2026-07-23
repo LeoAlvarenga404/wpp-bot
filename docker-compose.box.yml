@@ -1,0 +1,13 @@
+# Box override (AWS Lightsail). Replaces the dev/base host-port maps that
+# otherwise CONCATENATE with the base compose and self-conflict on 5433/6380.
+# Postgres/Redis stay internal-only; app binds localhost (reverse-proxy in front).
+services:
+  app:
+    environment:
+      NODE_ENV: production
+    ports: !override
+      - "127.0.0.1:3000:3000"
+  postgres:
+    ports: !override []
+  redis:
+    ports: !override []

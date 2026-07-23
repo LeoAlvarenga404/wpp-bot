@@ -33,7 +33,10 @@ RUN cd web && npm run build
 # `prisma` (the CLI) is a devDependency in package.json but the runtime
 # entrypoint needs it to run `prisma migrate deploy` on boot — reinstall it
 # in production scope so it survives the prune.
-RUN npm prune --omit=dev && npm install --omit=dev prisma
+# `link-preview-js` is an OPTIONAL Baileys dep (not in package.json) used to
+# build WhatsApp URL/link-card previews; without it every send logs
+# "Cannot find package 'link-preview-js' ... url generation failed".
+RUN npm prune --omit=dev && npm install --omit=dev prisma link-preview-js
 
 
 # ---- Stage 2: runtime ----
@@ -79,7 +82,9 @@ RUN npx playwright install --with-deps chromium \
 # Entrypoint runs `prisma migrate deploy` before booting the Nest app so a
 # fresh database is migrated automatically on container start.
 COPY --chown=node:node scripts/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Strip any CRLF (Windows checkouts / git archive with core.autocrlf) so the
+# `#!/bin/sh` shebang isn't `#!/bin/sh\r` — that fails as "no such file or directory".
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Persistent data dirs (Baileys auth, posted-log cache). Compose mounts override these.
 RUN mkdir -p /app/auth_info /app/data && chown -R node:node /app/auth_info /app/data

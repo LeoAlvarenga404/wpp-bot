@@ -24,14 +24,18 @@ const opts = { provider };
 // and pre-creates the bind-mount dirs. It deliberately does NOT bring the stack
 // up: that needs the .env, the Baileys QR scan and the Playwright
 // storage-state, all of which are manual (docs/deploy/lightsail.md).
+// NOTE: Lightsail runs user-data under /bin/sh (dash), ignoring the shebang,
+// so this must stay POSIX-sh safe — no `pipefail`, no pipe into `sh` that
+// would hide a curl failure under `set -e`.
 const userData = `#!/bin/bash
-set -euxo pipefail
+set -eux
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update && apt-get upgrade -y
 
-# Docker + compose plugin
-curl -fsSL https://get.docker.com | sh
+# Docker + compose plugin (download-then-run: no pipe, so failures surface)
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sh /tmp/get-docker.sh
 usermod -aG docker ubuntu
 
 # 2GB swap — survives the intermittent Chromium peak on a 2GB instance
