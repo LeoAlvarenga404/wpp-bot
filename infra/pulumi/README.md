@@ -30,7 +30,7 @@ npm install
 pulumi stack init prod
 
 # optional overrides (defaults already target 2GB / sa-east-1)
-pulumi config set wpp-bot-infra:bundleId small_2_0     # medium_2_0 = 4GB
+pulumi config set wpp-bot-infra:bundleId small_3_0     # medium_3_0 = 4GB
 pulumi config set wpp-bot-infra:sshKeyName my-lightsail-key   # else default key
 pulumi config set wpp-bot-infra:sshCidr 203.0.113.4/32       # lock SSH to your IP
 
@@ -76,7 +76,7 @@ Trust dashboard (Fase 5 do runbook).
 |-----|---------|-------|
 | `region` | `sa-east-1` | Lightsail region |
 | `availabilityZone` | `sa-east-1a` | must be inside region |
-| `bundleId` | `small_2_0` | 2GB/2vCPU (~$12/mo). `medium_2_0` = 4GB |
+| `bundleId` | `small_3_0` | 2GB/2vCPU (~$12/mo). `medium_3_0` = 4GB |
 | `blueprintId` | `ubuntu_22_04` | OS image |
 | `repoUrl` | this repo | bootstrap clones it |
 | `sshKeyName` | *(empty)* | existing Lightsail key-pair; empty = region default |

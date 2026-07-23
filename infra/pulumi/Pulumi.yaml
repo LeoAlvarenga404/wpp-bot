@@ -20,9 +20,9 @@ config:
     default: sa-east-1a
   wpp-bot-infra:bundleId:
     description: >
-      Lightsail plan. small_2_0 = 2GB/2vCPU (~$12/mo, the sized-from-measurement
-      choice). Bump to medium_2_0 (4GB) if Chromium OOMs.
-    default: small_2_0
+      Lightsail plan (gen 3). small_3_0 = 2GB/2vCPU (~$12/mo, the
+      sized-from-measurement choice). Bump to medium_3_0 (4GB) if Chromium OOMs.
+    default: small_3_0
   wpp-bot-infra:blueprintId:
     description: OS image.
     default: ubuntu_22_04
