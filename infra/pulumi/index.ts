@@ -7,7 +7,7 @@ import * as random from '@pulumi/random';
 const cfg = new pulumi.Config();
 const region = cfg.get('region') ?? 'sa-east-1';
 const availabilityZone = cfg.get('availabilityZone') ?? 'sa-east-1a';
-const bundleId = cfg.get('bundleId') ?? 'small_2_0'; // 2GB / 2vCPU
+const bundleId = cfg.get('bundleId') ?? 'small_3_0'; // 2GB / 2vCPU (gen 3)
 const blueprintId = cfg.get('blueprintId') ?? 'ubuntu_22_04';
 const repoUrl =
   cfg.get('repoUrl') ?? 'https://github.com/LeoAlvarenga404/wpp-bot.git';
