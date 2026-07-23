@@ -62,19 +62,32 @@ free -h   # confirmar Swap: 2.0G
 
 ## Fase 3 — Subir o bot
 
+# O repo é PRIVADO — `git clone` HTTPS anônimo dá 403. Enviar o código do
+# micro via git archive (só arquivos rastreados, sem node_modules/.env):
+#   git archive --format=tar main | ssh -i chave.pem ubuntu@IP \
+#     'mkdir -p ~/wpp-bot && tar -x -C ~/wpp-bot'
+# (ou configurar deploy key/PAT no box e clonar normalmente)
+
 ```bash
-git clone https://github.com/LeoAlvarenga404/wpp-bot.git
-cd wpp-bot
+cd ~/wpp-bot
+mkdir -p auth_info data config
 
 # .env de produção (ver bloco abaixo)
 nano .env
 
 # Copiar do SEU micro para a instância (rodar no micro):
 #   scp -i chave.pem auth_info/playwright-state.json ubuntu@IP:~/wpp-bot/auth_info/
-# (auth_info/ é bind-mount; o container lê o state e roda headless)
+#   (Playwright: state logado do ML — headless no box lê e roda)
+# ML token da API (evita OAuth + redirect): exportar do DB do micro para
+#   auth_info/ml-token.json no box — o app faz backfill p/ o DB no 1º boot.
+#   Shape: {access_token, refresh_token, expires_at (ms), user_id, scope,
+#   obtained_at}. Sem isso: GET /oauth/authorize (precisa redirect alcançável).
 
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-docker compose logs -f app     # acompanhar boot + QR do Baileys
+# IMPORTANTE: usar docker-compose.box.yml (NÃO prod.yml). base + prod
+# CONCATENAM as listas `ports` e dão bind duplo em 5433/6380 ("address
+# already in use"); box.yml faz !override — pg/redis internos, app em :3000.
+docker compose -f docker-compose.yml -f docker-compose.box.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.box.yml logs -f app  # boot + QR Baileys
 ```
 
 ### `.env` de produção (mínimo)
@@ -160,9 +173,10 @@ painel e a API mesmo com o `x-api-key` (defesa em profundidade).
 
 ## Operação
 
-- **Deploy de update:** `git pull && docker compose -f docker-compose.yml -f
-  docker-compose.prod.yml up -d --build` (para-e-sobe; Baileys reconecta com o
-  state salvo, sem novo QR).
+- **Deploy de update:** enviar o código novo do micro
+  (`git archive --format=tar main | ssh ... 'tar -x -C ~/wpp-bot'`), então
+  `docker compose -f docker-compose.yml -f docker-compose.box.yml up -d --build`
+  (para-e-sobe; Baileys reconecta com o state salvo, sem novo QR).
 - **Backup:** snapshot do Lightsail (pega os volumes) + `pg_dump` opcional.
 - **Sessão Playwright expirou** (deals sem link de afiliado / scrape falhando):
   relogar no micro → `scp` do `playwright-state.json` → `docker compose restart app`.
